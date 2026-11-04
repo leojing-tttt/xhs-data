@@ -1,0 +1,21 @@
+{
+  "code": 0,
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": "tokennote00000000000001",
+        "model_type": "note",
+        "xsec_token": "pc-token",
+        "note_card": {
+          "type": "normal",
+          "display_title": "带令牌",
+          "user": {
+            "user_id": "user_3",
+            "nickname": "作者丙"
+          }
+        }
+      }
+    ]
+  }
+}

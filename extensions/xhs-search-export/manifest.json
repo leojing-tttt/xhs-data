@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "小红书搜索导出",
+  "version": "1.0.0",
+  "description": "把当前小红书搜索结果里已经加载的笔记导出为 Excel",
+  "host_permissions": [
+    "https://www.xiaohongshu.com/*"
+  ],
+  "action": {
+    "default_title": "导出小红书搜索结果",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.xiaohongshu.com/search_result*"],
+      "js": ["src/inject-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.xiaohongshu.com/search_result*"],
+      "js": ["src/model.js", "vendor/xlsx.full.min.js", "src/content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
