@@ -253,3 +253,31 @@ Then('不可导出', function () {
 Then('关键词为{string}', function (keyword) {
   assert.equal(this.page.keyword, keyword);
 });
+
+When('检查扩展清单是否注入{string}', function (url) {
+  const manifest = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', '..', 'extensions', 'xhs-search-export', 'manifest.json'),
+    'utf8'
+  ));
+  this.injected = model.manifestInjects(manifest, url);
+});
+
+Then('会注入内容脚本', function () {
+  assert.equal(this.injected, true);
+});
+
+When('挂载页内面板到文档', function () {
+  const dom = new JSDOM('<!DOCTYPE html><html><body><div id="app"></div></body></html>', {
+    url: 'https://www.xiaohongshu.com/search_result?keyword=test',
+  });
+  this.mountedHost = model.mountPanelHost(dom.window.document);
+  this.mountedDocument = dom.window.document;
+});
+
+Then('面板挂在文档根节点上', function () {
+  assert.equal(this.mountedHost.parentNode, this.mountedDocument.documentElement);
+});
+
+Then('面板使用固定定位', function () {
+  assert.equal(this.mountedHost.style.position, 'fixed');
+});

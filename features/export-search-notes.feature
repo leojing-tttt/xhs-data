@@ -154,3 +154,26 @@
     当渲染页内面板
     那么面板文案包含"已捕获 2 条笔记"
     而且面板包含按钮"导出 Excel"
+
+  场景: 站点重定向后的搜索地址也可以导出
+    假如当前页面地址为"http://www.xiaohongshu.com/search_result/?keyword=%E5%A4%A7%E5%B9%B3%E5%B1%82%E8%A3%85%E4%BF%AE&source=web_user_page"
+    当判断扩展是否可用
+    那么可以导出
+    而且关键词为"大平层装修"
+
+  场景大纲: 这些真实页面地址都会注入内容脚本
+    当检查扩展清单是否注入"<地址>"
+    那么会注入内容脚本
+
+    例子:
+      | 地址 |
+      | https://www.xiaohongshu.com/search_result?keyword=%E5%A4%A7%E5%B9%B3%E5%B1%82%E8%A3%85%E4%BF%AE&source=web_user_page |
+      | https://www.xiaohongshu.com/search_result/?keyword=%E5%A4%A7%E5%B9%B3%E5%B1%82%E8%A3%85%E4%BF%AE |
+      | http://www.xiaohongshu.com/search_result/?keyword=%E5%A4%A7%E5%B9%B3%E5%B1%82%E8%A3%85%E4%BF%AE&source=web_user_page |
+      | https://www.xiaohongshu.com/ |
+      | https://xiaohongshu.com/search_result?keyword=%E5%A4%A7%E5%B9%B3%E5%B1%82%E8%A3%85%E4%BF%AE |
+
+  场景: 页内面板挂在文档根上并固定在视口
+    当挂载页内面板到文档
+    那么面板挂在文档根节点上
+    而且面板使用固定定位

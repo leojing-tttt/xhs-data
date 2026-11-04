@@ -406,6 +406,11 @@
     return cleaned || '未命名';
   }
 
+  const SEARCH_HOSTS = {
+    'www.xiaohongshu.com': true,
+    'xiaohongshu.com': true,
+  };
+
   function describePage(url) {
     let parsed;
     try {
@@ -414,8 +419,9 @@
       return { allowed: false, keyword: '', message: NOT_SEARCH_MESSAGE };
     }
     const path = parsed.pathname || '';
-    const allowed = parsed.protocol === 'https:'
-      && parsed.hostname === 'www.xiaohongshu.com'
+    const protocolOk = parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    const allowed = protocolOk
+      && SEARCH_HOSTS[parsed.hostname]
       && (path === '/search_result' || path.startsWith('/search_result/'));
     if (!allowed) {
       return { allowed: false, keyword: '', message: NOT_SEARCH_MESSAGE };
@@ -425,6 +431,77 @@
       keyword: parsed.searchParams.get('keyword') || '',
       message: '',
     };
+  }
+
+  function matchesContentScript(pattern, urlString) {
+    const parsedPattern = /^(\*|https|http):\/\/([^/]+)(\/.*)$/.exec(pattern);
+    if (!parsedPattern) return false;
+    let url;
+    try {
+      url = new URL(urlString);
+    } catch (error) {
+      return false;
+    }
+    const scheme = url.protocol.replace(':', '');
+    if (parsedPattern[1] !== '*' && parsedPattern[1] !== scheme) return false;
+    if (!hostMatches(parsedPattern[2], url.hostname)) return false;
+    return globMatch(parsedPattern[3], url.pathname + url.search);
+  }
+
+  function hostMatches(pattern, hostname) {
+    if (pattern === '*') return true;
+    if (pattern.indexOf('*.') === 0) {
+      const rest = pattern.slice(2);
+      return hostname === rest || hostname.slice(-(rest.length + 1)) === '.' + rest;
+    }
+    return pattern === hostname;
+  }
+
+  function globMatch(pattern, text) {
+    let expression = '^';
+    for (let index = 0; index < pattern.length; index += 1) {
+      const character = pattern[index];
+      if (character === '*') expression += '.*';
+      else if (/[\\^$.*+?()[\]{}|]/.test(character)) expression += '\\' + character;
+      else expression += character;
+    }
+    return new RegExp(expression + '$').test(text);
+  }
+
+  function manifestInjects(manifest, urlString) {
+    const scripts = (manifest && manifest.content_scripts) || [];
+    function entryFor(file) {
+      for (let index = 0; index < scripts.length; index += 1) {
+        const files = scripts[index].js || [];
+        if (files.indexOf(file) !== -1) return scripts[index];
+      }
+      return null;
+    }
+    const main = entryFor('src/inject-main.js');
+    const ui = entryFor('src/content.js');
+    if (!main || !ui) return false;
+    if (main.world !== 'MAIN') return false;
+    if (main.run_at !== 'document_start' || ui.run_at !== 'document_start') return false;
+    const permissions = (manifest && manifest.host_permissions) || [];
+    if (!permissions.some((pattern) => matchesContentScript(pattern, urlString))) return false;
+    return [main, ui].every((entry) => (entry.matches || []).some((pattern) => matchesContentScript(pattern, urlString)));
+  }
+
+  function mountPanelHost(document, host) {
+    const node = host || document.createElement('div');
+    node.id = 'xhs-search-export-root';
+    node.setAttribute('data-xhs-search-export', '1');
+    node.style.setProperty('position', 'fixed', 'important');
+    node.style.setProperty('right', '24px', 'important');
+    node.style.setProperty('bottom', '24px', 'important');
+    node.style.setProperty('z-index', '2147483647', 'important');
+    node.style.setProperty('width', '260px', 'important');
+    node.style.setProperty('display', 'block', 'important');
+    node.style.setProperty('visibility', 'visible', 'important');
+    node.style.setProperty('opacity', '1', 'important');
+    const root = document.documentElement;
+    if (root && node.parentNode !== root) root.appendChild(node);
+    return node;
   }
 
   function decideExport(options) {
@@ -482,5 +559,8 @@
     decideExport,
     panelView,
     renderPanel,
+    matchesContentScript,
+    manifestInjects,
+    mountPanelHost,
   };
 });

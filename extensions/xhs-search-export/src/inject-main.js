@@ -5,8 +5,10 @@
   const SOURCE = 'xhs-search-export';
 
   function onSearchPage() {
-    return location.hostname === 'www.xiaohongshu.com'
-      && (location.pathname === '/search_result' || location.pathname.indexOf('/search_result/') === 0);
+    const host = location.hostname;
+    const knownHost = host === 'www.xiaohongshu.com' || host === 'xiaohongshu.com';
+    const path = location.pathname || '';
+    return knownHost && (path === '/search_result' || path.indexOf('/search_result/') === 0);
   }
 
   function interesting(url) {
@@ -14,7 +16,7 @@
   }
 
   function emit(type, extra) {
-    if (!onSearchPage()) return;
+    if (type !== 'url-change' && !onSearchPage()) return;
     const message = { source: SOURCE, type: type };
     if (extra) {
       Object.keys(extra).forEach(function (key) {

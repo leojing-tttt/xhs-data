@@ -9,14 +9,9 @@
   const shadow = host.attachShadow({ mode: 'open' });
   const style = document.createElement('style');
   style.textContent = [
-    ':host { all: initial; }',
     '.panel {',
-    '  position: fixed;',
-    '  right: 24px;',
-    '  bottom: 24px;',
-    '  z-index: 2147483647;',
-    '  width: 260px;',
     '  box-sizing: border-box;',
+    '  width: 100%;',
     '  padding: 14px 14px 12px;',
     '  border: 1px solid #e6e6e6;',
     '  border-radius: 12px;',
@@ -50,17 +45,24 @@
   panel.append(title, body);
   shadow.append(style, panel);
 
-  let refreshTimer = 0;
-  let observer = null;
+  let seenHref = location.href;
 
   function currentPage() {
     return api.describePage(location.href);
   }
 
   function ensureHost() {
-    if (host.isConnected) return;
-    const parent = document.body || document.documentElement;
-    if (parent) parent.appendChild(host);
+    api.mountPanelHost(document, host);
+    const rect = host.getBoundingClientRect();
+    const offscreen = rect.height > 0 && (rect.top >= window.innerHeight || rect.bottom <= 0);
+    if (!offscreen) return;
+    const top = window.scrollY + Math.max(0, window.innerHeight - (host.offsetHeight || 120) - 24);
+    const left = window.scrollX + Math.max(0, window.innerWidth - (host.offsetWidth || 260) - 24);
+    host.style.setProperty('position', 'absolute', 'important');
+    host.style.setProperty('top', top + 'px', 'important');
+    host.style.setProperty('left', left + 'px', 'important');
+    host.style.setProperty('right', 'auto', 'important');
+    host.style.setProperty('bottom', 'auto', 'important');
   }
 
   function paint(hintOverride) {
@@ -78,7 +80,6 @@
     parts.button.addEventListener('click', function () {
       exportNotes();
     });
-    if (store.apiRecognized && observer) observer.disconnect();
   }
 
   function exportNotes() {
@@ -121,15 +122,6 @@
       paint(failed.message);
       return failed;
     }
-  }
-
-  function schedulePaint() {
-    if (store.apiRecognized) {
-      if (observer) observer.disconnect();
-      return;
-    }
-    clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(paint, 400);
   }
 
   window.addEventListener('message', function (event) {
@@ -177,9 +169,20 @@
     const page = currentPage();
     if (page.allowed) store.setKeyword(page.keyword);
     paint();
-    if (!document.documentElement) return;
-    observer = new MutationObserver(schedulePaint);
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    setInterval(function () {
+      const href = location.href;
+      if (href !== seenHref) {
+        seenHref = href;
+        const next = currentPage();
+        if (next.allowed) store.setKeyword(next.keyword);
+        paint();
+        return;
+      }
+      if (!currentPage().allowed) return;
+      if (!host.isConnected) paint();
+      else if (!store.apiRecognized) store.useVisibleCards(document);
+      else ensureHost();
+    }, 800);
   }
 
   if (document.readyState === 'loading') {
