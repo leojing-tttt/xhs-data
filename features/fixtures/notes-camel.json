@@ -1,0 +1,36 @@
+{
+  "code": 0,
+  "success": true,
+  "data": {
+    "hasMore": true,
+    "items": [
+      {
+        "id": "camelfeed00000000000001",
+        "modelType": "note",
+        "xsecToken": "camel-token",
+        "noteCard": {
+          "type": "video",
+          "displayTitle": "驼峰标题",
+          "user": {
+            "userId": "camel-user",
+            "nickName": "驼峰作者"
+          },
+          "interactInfo": {
+            "liked": false,
+            "likedCount": "88"
+          },
+          "cover": {
+            "urlDefault": "https://cdn.example.com/camel.jpg"
+          }
+        }
+      },
+      {
+        "id": "camelquery0000000000001",
+        "modelType": "rec_query",
+        "noteCard": {
+          "displayTitle": "不该被导出的推荐词"
+        }
+      }
+    ]
+  }
+}

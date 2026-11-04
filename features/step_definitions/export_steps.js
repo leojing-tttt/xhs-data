@@ -2,6 +2,7 @@ const { Given, When, Then, Before } = require('@cucumber/cucumber');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
 const model = require('../../extensions/xhs-search-export/src/model');
 
@@ -129,6 +130,67 @@ When('解析该搜索响应并在无法识别时回退可见卡片', function ()
 
 When('按可见卡片刷新捕获', function () {
   this.store.useVisibleCards(this.document);
+});
+
+When('页面换掉请求方法后又收到该搜索响应', async function () {
+  const payload = this.payloadText;
+  const messages = [];
+  const nativeFetch = function (url) {
+    return Promise.resolve({
+      url: String(url),
+      clone() {
+        return this;
+      },
+      text() {
+        return Promise.resolve(payload);
+      },
+    });
+  };
+  const location = {
+    hostname: 'www.xiaohongshu.com',
+    pathname: '/search_result',
+    origin: 'https://www.xiaohongshu.com',
+    href: 'https://www.xiaohongshu.com/search_result?keyword=test',
+  };
+  const history = { pushState() {}, replaceState() {} };
+  const sandbox = {
+    window: {
+      location,
+      history,
+      addEventListener() {},
+      postMessage(data) {
+        messages.push(data);
+      },
+      fetch: nativeFetch,
+    },
+    setInterval,
+    clearInterval,
+    location,
+    history,
+  };
+  function XMLHttpRequest() {}
+  XMLHttpRequest.prototype.open = function () {};
+  XMLHttpRequest.prototype.send = function () {};
+  sandbox.XMLHttpRequest = XMLHttpRequest;
+  sandbox.window.XMLHttpRequest = XMLHttpRequest;
+  vm.createContext(sandbox);
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'extensions', 'xhs-search-export', 'src', 'inject-main.js'),
+    'utf8'
+  );
+  vm.runInContext(source, sandbox);
+  sandbox.window.fetch = function (url) {
+    return nativeFetch(url);
+  };
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  await sandbox.window.fetch('https://edith.xiaohongshu.com/api/sns/web/v1/search/notes');
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  if (sandbox.window.__xhsSearchExportTimer) {
+    clearInterval(sandbox.window.__xhsSearchExportTimer);
+  }
+  const message = messages.find((item) => item && item.type === 'search-notes-response');
+  assert.ok(message, '换掉请求方法后没有再读到搜索响应');
+  this.store.ingestPayload(message.body);
 });
 
 When('搜索关键词变为{string}', function (keyword) {

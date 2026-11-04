@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "小红书搜索导出",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "把当前小红书搜索结果里已经加载的笔记导出为 Excel",
   "permissions": ["scripting"],
   "host_permissions": [

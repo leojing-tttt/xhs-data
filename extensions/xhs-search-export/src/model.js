@@ -112,28 +112,34 @@
 
   function noteFromItem(item) {
     if (!item || typeof item !== 'object') return null;
-    if (Object.prototype.hasOwnProperty.call(item, 'model_type') && item.model_type !== 'note') {
-      return null;
-    }
-    const card = item.note_card || item.note || item;
+    const modelType = ownField(item, ['model_type', 'modelType']);
+    if (modelType.present && modelType.value !== 'note') return null;
+    const card = item.note_card || item.noteCard || item.note || item;
     if (!card || typeof card !== 'object') return null;
-    if (card === item && !item.note_card && !item.note && !item.display_title && !item.title && !item.note_id) {
+    if (card === item && !item.note_card && !item.noteCard && !item.note && !ownField(item, ['display_title', 'displayTitle', 'title', 'note_id', 'noteId']).present) {
       return null;
     }
     return fieldsFromCard(card, item);
   }
 
   function fieldsFromCard(card, item) {
-    const id = firstValue(card.note_id, card.id, item === card ? undefined : item.id, item.note_id);
+    const id = firstValue(
+      card.note_id,
+      card.noteId,
+      card.id,
+      item === card ? undefined : item.id,
+      item.note_id,
+      item.noteId
+    );
     if (id == null || id === '') return null;
-    const user = card.user || card.user_info || {};
-    const titleField = readOwn(card, ['display_title', 'title']);
+    const user = card.user || card.user_info || card.userInfo || {};
+    const titleField = readOwn(card, ['display_title', 'displayTitle', 'title']);
     const authorField = readOwn(user, ['nickname', 'nick_name', 'nickName', 'name']);
     const authorIdField = readOwn(user, ['user_id', 'userid', 'userId']);
     const likesField = readLikes(card);
-    const typeField = readOwn(card, ['type', 'note_type']);
+    const typeField = readOwn(card, ['type', 'note_type', 'noteType']);
     const coverField = readCover(card);
-    const token = firstValue(item.xsec_token, card.xsec_token);
+    const token = firstValue(item.xsec_token, item.xsecToken, card.xsec_token, card.xsecToken);
     const note = {
       id: String(id),
       title: titleField.present ? String(titleField.value) : '',
@@ -154,25 +160,28 @@
   }
 
   function readLikes(card) {
-    const fromInteract = readOwn(card.interact_info, ['liked_count', 'likedCount']);
+    const interact = card.interact_info || card.interactInfo;
+    const fromInteract = readOwn(interact, ['liked_count', 'likedCount']);
     if (fromInteract.present) return fromInteract;
     return readOwn(card, ['liked_count', 'likedCount']);
   }
 
   function readCover(card) {
     const cover = card.cover;
+    const urlKeys = ['url_default', 'urlDefault', 'url', 'url_pre', 'urlPre'];
     if (cover && typeof cover === 'object') {
-      const direct = readOwn(cover, ['url_default', 'url', 'url_pre']);
+      const direct = readOwn(cover, urlKeys);
       if (direct.present) return direct;
-      const nested = firstInfoUrl(cover.info_list);
+      const nested = firstInfoUrl(cover.info_list || cover.infoList);
       if (nested.present) return nested;
     }
     if (typeof cover === 'string' && cover) return { present: true, value: cover };
-    if (Array.isArray(card.image_list)) {
-      for (const image of card.image_list) {
-        const direct = readOwn(image, ['url_default', 'url', 'url_pre']);
+    const images = card.image_list || card.imageList;
+    if (Array.isArray(images)) {
+      for (const image of images) {
+        const direct = readOwn(image, urlKeys);
         if (direct.present) return direct;
-        const nested = firstInfoUrl(image && image.info_list);
+        const nested = firstInfoUrl(image && (image.info_list || image.infoList));
         if (nested.present) return nested;
       }
     }
@@ -186,6 +195,10 @@
       if (found.present) return found;
     }
     return { present: false, value: undefined };
+  }
+
+  function ownField(obj, keys) {
+    return readOwn(obj, keys);
   }
 
   function readOwn(obj, keys) {
@@ -245,6 +258,21 @@
         const alt = image && (image.getAttribute('alt') || '').trim();
         if (alt) entry.title = alt;
       }
+    }
+
+    const numbered = document.querySelectorAll('[data-note-id]');
+    for (const node of numbered) {
+      const id = String(node.getAttribute('data-note-id') || '').trim();
+      if (!id || !/^[0-9a-zA-Z]+$/.test(id) || found.has(id)) continue;
+      const titleNode = node.querySelector('.title, a.title');
+      const image = node.querySelector('img');
+      const alt = image && (image.getAttribute('alt') || '').trim();
+      found.set(id, {
+        id,
+        title: elementText(titleNode || node) || alt || '',
+        link: buildLink(id, ''),
+        root: node,
+      });
     }
 
     const notes = [];
@@ -491,16 +519,37 @@
     const node = host || document.createElement('div');
     node.id = 'xhs-search-export-root';
     node.setAttribute('data-xhs-search-export', '1');
-    node.style.setProperty('position', 'fixed', 'important');
-    node.style.setProperty('right', '24px', 'important');
-    node.style.setProperty('bottom', '24px', 'important');
-    node.style.setProperty('z-index', '2147483647', 'important');
-    node.style.setProperty('width', '260px', 'important');
-    node.style.setProperty('display', 'block', 'important');
-    node.style.setProperty('visibility', 'visible', 'important');
-    node.style.setProperty('opacity', '1', 'important');
+    function place() {
+      node.style.setProperty('position', 'fixed', 'important');
+      node.style.setProperty('right', '24px', 'important');
+      node.style.setProperty('bottom', '24px', 'important');
+      node.style.setProperty('top', 'auto', 'important');
+      node.style.setProperty('left', 'auto', 'important');
+      node.style.setProperty('z-index', '2147483647', 'important');
+      node.style.setProperty('width', '260px', 'important');
+      node.style.setProperty('height', 'auto', 'important');
+      node.style.setProperty('margin', '0', 'important');
+      node.style.setProperty('inset', 'auto 24px 24px auto', 'important');
+      node.style.setProperty('display', 'block', 'important');
+      node.style.setProperty('visibility', 'visible', 'important');
+      node.style.setProperty('opacity', '1', 'important');
+      node.style.setProperty('background', 'transparent', 'important');
+      node.style.setProperty('border', '0', 'important');
+      node.style.setProperty('padding', '0', 'important');
+      node.style.setProperty('overflow', 'visible', 'important');
+    }
+    place();
     const root = document.documentElement;
     if (root && node.parentNode !== root) root.appendChild(node);
+    try {
+      if (typeof node.showPopover === 'function') {
+        node.popover = 'manual';
+        if (typeof node.matches !== 'function' || !node.matches(':popover-open')) {
+          node.showPopover();
+        }
+        place();
+      }
+    } catch (error) {}
     return node;
   }
 

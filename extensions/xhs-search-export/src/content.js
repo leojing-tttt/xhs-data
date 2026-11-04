@@ -125,7 +125,7 @@
   }
 
   window.addEventListener('message', function (event) {
-    if (event.source !== window) return;
+    if (event.origin && event.origin !== location.origin) return;
     const data = event.data;
     if (!data || data.source !== 'xhs-search-export') return;
     const page = currentPage();
