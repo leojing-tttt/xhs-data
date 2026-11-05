@@ -33,6 +33,22 @@
     '}',
     '.mode.recommend { background: #f3f4f6; color: #111; }',
     '.count, .hint { margin: 0; }',
+    'label {',
+    '  display: block;',
+    '  margin-top: 8px;',
+    '  color: #444;',
+    '  font-size: 12px;',
+    '}',
+    'input {',
+    '  box-sizing: border-box;',
+    '  width: 100%;',
+    '  margin-top: 4px;',
+    '  border: 1px solid #e6e6e6;',
+    '  border-radius: 8px;',
+    '  padding: 6px 8px;',
+    '  color: #222;',
+    '  font: inherit;',
+    '}',
     '.hint { margin-top: 8px; color: #666; font-size: 12px; }',
     'button {',
     '  margin-top: 10px;',
@@ -81,6 +97,8 @@
   }
 
   let seenMode = '';
+  let targetDraft = '100';
+  let busy = false;
 
   function rememberLeaving(page) {
     if (!page.mode || page.mode === seenMode) return;
@@ -99,16 +117,69 @@
     if (page.mode === 'search') store.setKeyword(page.keyword);
     session.useVisibleCards(page, document);
     ensureHost();
-    const view = api.panelView(store.list().length, page);
+    const view = api.panelView(store.list().length, page, { targetValue: targetDraft });
     title.textContent = view.title;
     if (hintOverride) view.hint = hintOverride;
     const parts = api.renderPanel(body, view);
+    parts.target.addEventListener('input', function () {
+      targetDraft = parts.target.value;
+    });
+    parts.target.disabled = busy;
+    parts.button.disabled = busy;
     parts.button.addEventListener('click', function () {
       exportNotes();
     });
   }
 
-  function exportNotes() {
+  function waitForList(start) {
+    return new Promise(function (resolve) {
+      let settled = false;
+      function finish() {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener('message', onMessage);
+        resolve();
+      }
+      function onMessage(event) {
+        if (event.origin && event.origin !== location.origin) return;
+        const data = event.data;
+        if (!data || data.source !== 'xhs-search-export') return;
+        if (data.type === 'next-page-waiting') return;
+        if (data.type === 'feed-notes-response' || data.type === 'search-notes-response' || data.type === 'next-page-failed') {
+          finish();
+        }
+      }
+      window.addEventListener('message', onMessage);
+      try {
+        start();
+      } catch (error) {
+        finish();
+        return;
+      }
+      setTimeout(finish, 2500);
+    });
+  }
+
+  function scrollForMore() {
+    const root = document.scrollingElement || document.documentElement;
+    const top = root.scrollHeight;
+    try {
+      window.scrollTo(0, top);
+    } catch (error) {}
+    try {
+      root.scrollTop = root.scrollHeight;
+    } catch (error) {}
+    const cards = document.querySelectorAll('section.note-item');
+    const last = cards[cards.length - 1];
+    if (last && last.scrollIntoView) {
+      try {
+        last.scrollIntoView({ block: 'end' });
+      } catch (error) {}
+    }
+  }
+
+  async function exportNotes() {
+    if (busy) return { download: false, filename: '', message: '正在加载，请稍候' };
     const page = currentPage();
     if (!page.allowed) {
       return { download: false, filename: '', message: page.message };
@@ -117,17 +188,45 @@
     const store = activeStore(page);
     if (page.mode === 'search') store.setKeyword(page.keyword);
     session.useVisibleCards(page, document);
-    const decision = api.decideExport({
-      notes: store.list(),
-      url: location.href,
-      now: new Date(),
-      keyword: page.keyword || store.keyword,
-    });
-    if (!decision.download) {
-      paint(decision.message);
-      return decision;
-    }
+    const input = body.querySelector('[data-role="target"]');
+    if (input) targetDraft = input.value;
+    busy = true;
+    paint('正在按目标条数加载');
+    let result = { download: false, filename: '', message: '' };
     try {
+      const filled = await api.collectUntil(session, page, {
+        target: targetDraft,
+        pageNow: currentPage,
+        onProgress: function (text) {
+          paint(text);
+        },
+        send: function (request) {
+          return waitForList(function () {
+            window.postMessage({
+              source: 'xhs-search-export',
+              type: 'send-next-page',
+              request: request,
+            }, location.origin);
+          });
+        },
+        scroll: function () {
+          return waitForList(scrollForMore);
+        },
+      });
+      if (!filled.download) {
+        result = { download: false, filename: '', message: filled.message };
+        return result;
+      }
+      const decision = api.decideExport({
+        notes: store.list(),
+        url: location.href,
+        now: new Date(),
+        keyword: page.keyword || store.keyword,
+      });
+      if (!decision.download) {
+        result = { download: false, filename: '', message: filled.message || decision.message };
+        return result;
+      }
       const bytes = api.workbookBytes(store.list(), globalThis.XLSX, { mode: page.mode });
       const blob = new Blob([bytes], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -143,12 +242,14 @@
       setTimeout(function () {
         URL.revokeObjectURL(objectUrl);
       }, 1500);
-      paint('已开始下载 ' + decision.filename);
-      return decision;
+      result = { download: true, filename: decision.filename, message: filled.message };
+      return result;
     } catch (error) {
-      const failed = { download: false, filename: '', message: '导出失败，请刷新页面后再试。' };
-      paint(failed.message);
-      return failed;
+      result = { download: false, filename: '', message: '导出失败，请刷新页面后再试。' };
+      return result;
+    } finally {
+      busy = false;
+      paint(result.message);
     }
   }
 
@@ -164,6 +265,10 @@
     if (data.type === 'url-change') {
       if (page.mode === 'search') activeStore(page).setKeyword(page.keyword);
       paint();
+      return;
+    }
+    if (data.type === 'page-request' && data.kind === page.mode) {
+      session.notePageRequest(page, { url: data.url, method: data.method, body: data.body });
       return;
     }
     const kind = data.type === 'feed-notes-response'
@@ -194,7 +299,8 @@
         return;
       }
       if (message.type === 'xhs-export-run') {
-        sendResponse(exportNotes());
+        exportNotes().then(sendResponse);
+        return true;
       }
     });
   }

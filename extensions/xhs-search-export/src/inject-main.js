@@ -67,8 +67,113 @@
     fetch: window.fetch,
     XHR: window.XMLHttpRequest,
   };
+  const lastRequests = { search: null, recommend: null };
+  const inflight = { search: 0, recommend: 0 };
+  let sendingNext = false;
+  let replayDepth = 0;
 
-  function wrappedFetch() {
+  function markStart(kind) {
+    if (kind === 'search' || kind === 'recommend') inflight[kind] += 1;
+  }
+
+  function markEnd(kind) {
+    if ((kind === 'search' || kind === 'recommend') && inflight[kind] > 0) inflight[kind] -= 1;
+  }
+
+  function bodyText(body) {
+    if (body == null) return '';
+    if (typeof body === 'string') return body;
+    try {
+      return JSON.stringify(body);
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function sameApi(left, right) {
+    try {
+      const base = location.href;
+      const a = new URL(String(left), base);
+      const b = new URL(String(right), base);
+      return a.origin === b.origin && a.pathname === b.pathname;
+    } catch (error) {
+      return String(left) === String(right);
+    }
+  }
+
+  function captureRequest(url, method, body) {
+    const kind = responseKind(url);
+    if (!kind || kind !== pageMode()) return;
+    const record = {
+      url: String(url),
+      method: method || 'POST',
+      body: bodyText(body),
+    };
+    lastRequests[kind] = record;
+    markStart(kind);
+    emit('page-request', { kind: kind, url: record.url, method: record.method, body: record.body });
+  }
+
+  function dispatchNext(request) {
+    const kind = responseKind(request && request.url);
+    const last = kind && lastRequests[kind];
+    if (!kind || !last || !sameApi(last.url, request.url) || typeof request.body !== 'string') {
+      emit('next-page-failed', {});
+      return;
+    }
+    if (inflight[kind] > 0 || sendingNext) {
+      emit('next-page-waiting', {});
+      return;
+    }
+    sendingNext = true;
+    markStart(kind);
+    let xhr;
+    try {
+      xhr = new slots.XHR();
+    } catch (error) {
+      sendingNext = false;
+      emit('next-page-failed', {});
+      return;
+    }
+    const open = xhr.open;
+    const send = xhr.send;
+    try {
+      open.call(xhr, request.method || 'POST', request.url, true);
+      xhr.setRequestHeader('content-type', 'application/json;charset=UTF-8');
+    } catch (error) {}
+    remember(xhr, request.url);
+    watch(xhr);
+    xhr.addEventListener('loadend', function () {
+      sendingNext = false;
+      markEnd(kind);
+    });
+    try {
+      replayDepth += 1;
+      send.call(xhr, request.body);
+    } catch (error) {
+      sendingNext = false;
+      markEnd(kind);
+      emit('next-page-failed', {});
+    } finally {
+      replayDepth -= 1;
+    }
+    setTimeout(function () {
+      if (!sendingNext) return;
+      sendingNext = false;
+      markEnd(kind);
+    }, 8000);
+  }
+
+  function wrappedFetch(input, init) {
+    let startedKind = '';
+    try {
+      const method = (init && init.method) || (input && input.method) || 'GET';
+      const url = requestUrl(input, null);
+      const kind = responseKind(url);
+      const before = kind ? inflight[kind] : 0;
+      captureRequest(url, method, init && init.body);
+      if (kind && inflight[kind] > before) startedKind = kind;
+    } catch (error) {}
     const args = arguments;
     const current = slots.fetch;
     let pending;
@@ -87,6 +192,8 @@
         }
       } catch (error) {}
       return response;
+    }).finally(function () {
+      if (startedKind) markEnd(startedKind);
     });
   }
   wrappedFetch[MARK] = true;
@@ -124,12 +231,21 @@
     if (typeof open === 'function') {
       xhr.open = function (method, url) {
         remember(xhr, url);
+        try {
+          xhr.__xhsSearchExportMethod = method;
+        } catch (error) {}
         return open.apply(xhr, arguments);
       };
     }
     if (typeof send === 'function') {
-      xhr.send = function () {
+      xhr.send = function (body) {
+        if (replayDepth > 0) return send.apply(xhr, arguments);
+        captureRequest(xhr.__xhsSearchExportUrl || '', xhr.__xhsSearchExportMethod || 'POST', body);
         watch(xhr);
+        const kind = responseKind(xhr.__xhsSearchExportUrl || '');
+        xhr.addEventListener('loadend', function () {
+          markEnd(kind);
+        });
         return send.apply(xhr, arguments);
       };
     }
@@ -194,4 +310,10 @@
     };
   }
   window.addEventListener('popstate', notifyUrl);
+  window.addEventListener('message', function (event) {
+    if (event.origin && event.origin !== location.origin) return;
+    const data = event.data;
+    if (!data || data.source !== SOURCE || data.type !== 'send-next-page') return;
+    dispatchNext(data.request || {});
+  });
 })();

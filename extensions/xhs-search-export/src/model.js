@@ -10,6 +10,12 @@
   const EMPTY_EXPORT_MESSAGE = '还没有捕获到笔记。请先在搜索结果页向下浏览，等笔记出现在列表里后再导出。';
   const RECOMMEND_EMPTY_MESSAGE = '还没有捕获到笔记。请先在推荐页向下浏览，等笔记出现在列表里后再导出。';
   const NOT_SEARCH_MESSAGE = '当前页面不是小红书推荐页或搜索结果页';
+  const INVALID_TARGET_MESSAGE = '请输入 1 到 2000 的整数';
+  const PAGE_LEFT_MESSAGE = '页面已切换，已停止继续加载';
+  const DEFAULT_TARGET = 100;
+  const MAX_TARGET = 2000;
+  const EMPTY_ROUND_LIMIT = 3;
+  const MIN_GAP_MS = 1000;
   const OPTIONAL_COLUMNS = ['作者ID', '点赞数', '笔记类型', '封面图'];
   const TEXT_COLUMNS = new Set(['笔记ID', '标题', '作者', '作者ID', '作者主页', '笔记类型', '封面图', '笔记链接']);
 
@@ -495,19 +501,264 @@
     return '';
   }
 
+  function blankPageState() {
+    return { hasMore: null, cursor: '', searchId: '' };
+  }
+
+  function firstText(root, keys) {
+    for (let index = 0; index < keys.length; index += 1) {
+      const value = root[keys[index]];
+      if (value == null || value === '') continue;
+      if (typeof value === 'string' || typeof value === 'number') return String(value);
+    }
+    return '';
+  }
+
+  function readPageState(payload) {
+    let data = payload;
+    if (typeof payload === 'string') {
+      const text = payload.trim();
+      if (!text) return blankPageState();
+      try {
+        data = JSON.parse(text);
+      } catch (error) {
+        return blankPageState();
+      }
+    }
+    if (!data || typeof data !== 'object') return blankPageState();
+    const roots = [data];
+    if (data.data && typeof data.data === 'object') roots.push(data.data);
+    let hasMore = null;
+    let cursor = '';
+    let searchId = '';
+    roots.forEach(function (root) {
+      if (hasMore === null) {
+        if (typeof root.has_more === 'boolean') hasMore = root.has_more;
+        else if (typeof root.hasMore === 'boolean') hasMore = root.hasMore;
+      }
+      if (!cursor) cursor = firstText(root, ['cursor_score', 'cursorScore', 'cursor', 'next_cursor', 'nextCursor']);
+      if (!searchId) searchId = firstText(root, ['search_id', 'searchId']);
+    });
+    return { hasMore: hasMore, cursor: cursor, searchId: searchId };
+  }
+
+  function bumpPage(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value + 1;
+    if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value) + 1;
+    return null;
+  }
+
+  function buildNextPageRequest(last, state, capturedCount) {
+    if (!last || !last.url || typeof last.body !== 'string' || !last.body) return null;
+    let data;
+    try {
+      data = JSON.parse(last.body);
+    } catch (error) {
+      return null;
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    const next = JSON.parse(JSON.stringify(data));
+    const cursorKeys = ['cursor_score', 'cursorScore', 'cursor', 'next_cursor', 'nextCursor'];
+    const hasCursorKey = cursorKeys.some(function (key) {
+      return Object.prototype.hasOwnProperty.call(next, key);
+    });
+    if (hasCursorKey) {
+      if (!state || !state.cursor) return null;
+      let advanced = false;
+      cursorKeys.forEach(function (key) {
+        if (!Object.prototype.hasOwnProperty.call(next, key)) return;
+        if (String(next[key]) !== String(state.cursor)) {
+          next[key] = state.cursor;
+          advanced = true;
+        }
+      });
+      if (!advanced) return null;
+    }
+    ['page', 'page_num', 'pageNum'].forEach(function (key) {
+      if (!Object.prototype.hasOwnProperty.call(next, key)) return;
+      const bumped = bumpPage(next[key]);
+      if (bumped != null) next[key] = bumped;
+    });
+    ['note_index', 'noteIndex'].forEach(function (key) {
+      if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = capturedCount;
+    });
+    ['refresh_type', 'refreshType'].forEach(function (key) {
+      if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = 3;
+    });
+    if (state && state.searchId) {
+      ['search_id', 'searchId'].forEach(function (key) {
+        if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = state.searchId;
+      });
+    }
+    const body = JSON.stringify(next);
+    if (body === last.body) return null;
+    return { url: last.url, method: last.method || 'POST', body: body };
+  }
+
+  function parseExportTarget(raw) {
+    const text = raw == null ? '' : String(raw).trim();
+    if (!text || !/^\d+$/.test(text)) {
+      return { ok: false, target: 0, capped: false, message: INVALID_TARGET_MESSAGE };
+    }
+    const value = Number(text);
+    if (!value) {
+      return { ok: false, target: 0, capped: false, message: INVALID_TARGET_MESSAGE };
+    }
+    if (value > MAX_TARGET) {
+      return { ok: true, target: MAX_TARGET, capped: true, message: '' };
+    }
+    return { ok: true, target: value, capped: false, message: '' };
+  }
+
+  function progressText(target, actual) {
+    return '目标 ' + target + ' 条，已拿到 ' + actual + ' 条';
+  }
+
+  function outcomeMessage(parts) {
+    return parts.filter(Boolean).join('。') + '。';
+  }
+
+  function collectUntil(session, page, options) {
+    const opts = options || {};
+    const parsed = parseExportTarget(opts.target);
+    const store = session.storeFor(page);
+    if (!parsed.ok) {
+      return Promise.resolve({
+        download: false,
+        asked: 0,
+        target: 0,
+        actual: store.list().length,
+        capped: false,
+        message: parsed.message,
+        notes: [],
+      });
+    }
+    const gap = opts.minGapMs == null ? MIN_GAP_MS : opts.minGapMs;
+    function stamp() {
+      return opts.now ? opts.now() : Date.now();
+    }
+    function sleep(ms) {
+      return opts.sleep ? opts.sleep(ms) : new Promise(function (resolve) { setTimeout(resolve, ms); });
+    }
+    function notify() {
+      if (opts.onProgress) opts.onProgress(progressText(parsed.target, store.list().length));
+    }
+    function finish(asked, reason, allowDownload) {
+      const actual = store.list().length;
+      if (reason === PAGE_LEFT_MESSAGE) {
+        return {
+          download: false,
+          asked: asked,
+          target: parsed.target,
+          actual: actual,
+          capped: parsed.capped,
+          message: outcomeMessage([PAGE_LEFT_MESSAGE, '目标 ' + parsed.target + ' 条，实际 ' + actual + ' 条']),
+          notes: [],
+        };
+      }
+      const parts = [];
+      if (parsed.capped) parts.push('单次最多 ' + MAX_TARGET + ' 条');
+      parts.push('目标 ' + parsed.target + ' 条，实际 ' + actual + ' 条');
+      if (reason && actual < parsed.target) parts.push(reason);
+      const download = Boolean(allowDownload && actual > 0);
+      return {
+        download: download,
+        asked: asked,
+        target: parsed.target,
+        actual: actual,
+        capped: parsed.capped,
+        short: actual < parsed.target,
+        message: outcomeMessage(parts),
+        notes: download ? store.list() : [],
+      };
+    }
+    async function run() {
+      let emptyRounds = 0;
+      let asked = 0;
+      let lastTick = null;
+      notify();
+      while (store.list().length < parsed.target) {
+        if (opts.pageNow && opts.pageNow().mode !== page.mode) {
+          return finish(asked, PAGE_LEFT_MESSAGE, false);
+        }
+        const state = session.pageState(page);
+        if (state.hasMore === false) return finish(asked, '接口没有更多了', true);
+        if (emptyRounds >= EMPTY_ROUND_LIMIT) return finish(asked, '连续几次没有新笔记', true);
+        const request = session.nextPageRequest(page);
+        if (lastTick !== null) {
+          const elapsed = stamp() - lastTick;
+          if (elapsed < gap) await sleep(gap - elapsed);
+        }
+        if (opts.pageNow && opts.pageNow().mode !== page.mode) {
+          return finish(asked, PAGE_LEFT_MESSAGE, false);
+        }
+        const before = store.list().length;
+        asked += 1;
+        lastTick = stamp();
+        if (request) {
+          session.notePageRequest(page, request);
+          if (opts.send) await opts.send(request);
+        } else if (opts.scroll) {
+          await opts.scroll();
+        } else {
+          emptyRounds += 1;
+          continue;
+        }
+        if (opts.pageNow && opts.pageNow().mode !== page.mode) {
+          return finish(asked, PAGE_LEFT_MESSAGE, false);
+        }
+        if (store.list().length <= before) emptyRounds += 1;
+        else emptyRounds = 0;
+        notify();
+      }
+      return finish(asked, '', true);
+    }
+    return run();
+  }
+
   function createSession() {
     const search = createStore();
     const recommend = createStore();
+    const requests = { search: null, recommend: null };
+    const states = { search: blankPageState(), recommend: blankPageState() };
     let held = null;
+    function modeOf(page) {
+      return page && page.mode === 'recommend' ? 'recommend' : 'search';
+    }
     return {
       storeFor(page) {
         return page && page.mode === 'recommend' ? recommend : search;
+      },
+      pageState(page) {
+        const current = states[modeOf(page)];
+        return { hasMore: current.hasMore, cursor: current.cursor, searchId: current.searchId };
+      },
+      notePageRequest(page, request) {
+        if (!page || (page.mode !== 'search' && page.mode !== 'recommend') || !request) return;
+        requests[page.mode] = {
+          url: request.url,
+          method: request.method || 'POST',
+          body: request.body == null ? '' : String(request.body),
+        };
+      },
+      nextPageRequest(page) {
+        if (!page || (page.mode !== 'search' && page.mode !== 'recommend')) return null;
+        if (states[page.mode].hasMore === false) return null;
+        return buildNextPageRequest(requests[page.mode], states[page.mode], this.storeFor(page).list().length);
       },
       ingest(page, payload, kind) {
         if (!page || !page.allowed || page.mode !== kind) {
           return { recognized: false, added: 0 };
         }
-        return this.storeFor(page).ingestPayload(payload);
+        const result = this.storeFor(page).ingestPayload(payload);
+        if (result.recognized) {
+          const read = readPageState(payload);
+          const current = states[page.mode];
+          if (read.hasMore !== null) current.hasMore = read.hasMore;
+          if (read.cursor) current.cursor = read.cursor;
+          if (read.searchId) current.searchId = read.searchId;
+        }
+        return result;
       },
       holdVisible(notes) {
         held = new Set((notes || []).map(function (note) { return note.id; }));
@@ -640,7 +891,7 @@
     return mode === 'recommend' ? RECOMMEND_EMPTY_MESSAGE : EMPTY_EXPORT_MESSAGE;
   }
 
-  function panelView(count, page) {
+  function panelView(count, page, options) {
     const mode = page && page.mode === 'recommend' ? 'recommend' : 'search';
     const label = mode === 'recommend' ? '推荐' : '搜索';
     return {
@@ -648,6 +899,10 @@
       modeLabel: label,
       title: mode === 'recommend' ? '导出推荐' : '导出搜索',
       countText: '已捕获 ' + count + ' 条笔记',
+      targetLabel: '目标条数',
+      targetValue: options && Object.prototype.hasOwnProperty.call(options, 'targetValue')
+        ? String(options.targetValue)
+        : String(DEFAULT_TARGET),
       buttonText: '导出 Excel',
       hint: count === 0
         ? emptyMessage(mode)
@@ -671,11 +926,21 @@
     button.type = 'button';
     button.setAttribute('data-role', 'export');
     button.textContent = view.buttonText;
+    const targetLabel = doc.createElement('label');
+    targetLabel.setAttribute('data-role', 'target-label');
+    targetLabel.textContent = view.targetLabel || '目标条数';
+    const target = doc.createElement('input');
+    target.setAttribute('data-role', 'target');
+    target.type = 'number';
+    target.min = '1';
+    target.max = String(MAX_TARGET);
+    target.value = view.targetValue != null ? view.targetValue : String(DEFAULT_TARGET);
+    targetLabel.appendChild(target);
     const hint = doc.createElement('p');
     hint.setAttribute('data-role', 'hint');
     hint.textContent = view.hint || '';
-    container.append(mode, count, button, hint);
-    return { mode, count, button, hint };
+    container.append(mode, count, targetLabel, button, hint);
+    return { mode, count, button, hint, target, targetLabel };
   }
 
   return {
@@ -691,6 +956,9 @@
     formatExportFilename,
     describePage,
     decideExport,
+    parseExportTarget,
+    buildNextPageRequest,
+    collectUntil,
     panelView,
     renderPanel,
     matchesContentScript,

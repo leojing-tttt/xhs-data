@@ -1,0 +1,28 @@
+{
+  "code": 0,
+  "success": true,
+  "data": {
+    "has_more": true,
+    "cursor_score": "c-later",
+    "items": [
+      {
+        "id": "more000000000000000001",
+        "model_type": "note",
+        "note_card": {
+          "type": "normal",
+          "display_title": "第三页笔记",
+          "user": { "user_id": "user_3", "nickname": "第三作者" }
+        }
+      },
+      {
+        "id": "more000000000000000002",
+        "model_type": "note",
+        "note_card": {
+          "type": "normal",
+          "display_title": "第四页笔记",
+          "user": { "user_id": "user_4", "nickname": "第四作者" }
+        }
+      }
+    ]
+  }
+}

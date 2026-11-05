@@ -45,9 +45,9 @@
             hintEl.textContent = '没有完成导出。请刷新当前页面后再试。';
             return;
           }
-          hintEl.textContent = result.download
-            ? '已开始下载 ' + result.filename
-            : result.message;
+          hintEl.textContent = result.message
+            ? result.message
+            : (result.download ? '已开始下载 ' + result.filename : '');
         });
       });
     });

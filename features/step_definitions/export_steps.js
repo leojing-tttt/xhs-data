@@ -338,11 +338,125 @@ Then('提示包含{string}', function (text) {
 });
 
 Then('面板文案包含{string}', function (text) {
-  const parts = [this.panel.mode, this.panel.count, this.panel.hint]
+  const parts = [this.panel.mode, this.panel.count, this.panel.targetLabel, this.panel.hint]
     .filter(Boolean)
     .map((node) => node.textContent)
     .join('\n');
   assert.ok(parts.includes(text), parts);
+});
+
+Then('目标条数输入为{string}', function (value) {
+  assert.ok(this.panel.target, '面板上没有条数输入');
+  assert.equal(this.panel.target.value, value);
+});
+
+When('解析导出条数{string}', function (raw) {
+  this.targetParsed = model.parseExportTarget(raw);
+});
+
+Then('采用条数{int}', function (count) {
+  assert.equal(this.targetParsed.ok, true);
+  assert.equal(this.targetParsed.target, count);
+});
+
+Given('已记下页面自己的{string}请求{string}', function (label, name) {
+  const page = model.describePage(this.pageUrl);
+  const kind = label === '推荐' ? 'recommend' : 'search';
+  const request = JSON.parse(readFixture(name));
+  exportSession(this).notePageRequest(Object.assign({}, page, { mode: kind }), request);
+});
+
+Given('后续页面依次返回{string}', function (list) {
+  this.nextPages = list.split(',').map((item) => item.trim()).filter(Boolean);
+});
+
+Given('补齐过程中改去{string}', function (url) {
+  this.leaveTo = url;
+});
+
+When('按目标条数{string}补齐当前列表', async function (target) {
+  const session = exportSession(this);
+  const page = model.describePage(this.pageUrl);
+  this.page = page;
+  this.sentRequests = [];
+  this.scrolls = 0;
+  this.progressLog = [];
+  this.gaps = [];
+  let inFlight = 0;
+  this.maxInFlight = 0;
+  let clock = 0;
+  const script = (this.nextPages || []).slice();
+  this.exportResult = await model.collectUntil(session, page, {
+    target: target,
+    minGapMs: 1000,
+    now: function () { return clock; },
+    sleep: function (ms) {
+      clock += ms;
+      this.gaps.push(ms);
+      return Promise.resolve();
+    }.bind(this),
+    pageNow: function () {
+      return model.describePage(this.pageUrl);
+    }.bind(this),
+    onProgress: function (text) {
+      this.progressLog.push(text);
+    }.bind(this),
+    send: async function (request) {
+      inFlight += 1;
+      this.maxInFlight = Math.max(this.maxInFlight, inFlight);
+      this.sentRequests.push(request);
+      if (this.leaveTo) this.pageUrl = this.leaveTo;
+      const next = script.shift();
+      if (next) session.ingest(page, readFixture(next), page.mode);
+      inFlight -= 1;
+    }.bind(this),
+    scroll: async function () {
+      this.scrolls += 1;
+      const next = script.shift();
+      if (next) session.ingest(page, readFixture(next), page.mode);
+    }.bind(this),
+  });
+  this.notice = this.exportResult.message || '';
+  this.filename = this.exportResult.download ? this.exportResult.filename || 'export.xlsx' : null;
+  this.store = session.storeFor(page);
+});
+
+Then('没有继续要下一页', function () {
+  assert.equal((this.sentRequests || []).length, 0);
+  assert.equal(this.scrolls || 0, 0);
+});
+
+Then('请求了{int}次下一页', function (count) {
+  assert.equal(this.sentRequests.length, count);
+});
+
+Then('滚动了{int}次', function (count) {
+  assert.equal(this.scrolls, count);
+});
+
+Then('下一页请求地址包含{string}', function (text) {
+  assert.ok(this.sentRequests.some((request) => String(request.url).includes(text)), JSON.stringify(this.sentRequests));
+});
+
+Then('下一页请求体包含{string}', function (text) {
+  assert.ok(this.sentRequests.some((request) => String(request.body).includes(text)), this.sentRequests.map((request) => request.body).join('\n'));
+});
+
+Then('加载过程出现{string}', function (text) {
+  assert.ok(this.progressLog.some((line) => line.includes(text)), this.progressLog.join(' | '));
+});
+
+Then('下一页没有并发', function () {
+  assert.equal(this.maxInFlight, 1);
+});
+
+Then('相邻下一页至少间隔{int}毫秒', function (ms) {
+  assert.ok(this.gaps.length >= 1, '没有间隔');
+  this.gaps.forEach((gap) => assert.ok(gap >= ms, String(gap)));
+});
+
+Then('提示不包含{string}', function (text) {
+  assert.equal(String(this.notice).includes(text), false, String(this.notice));
 });
 
 Then('面板包含按钮{string}', function (label) {
