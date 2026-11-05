@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "小红书搜索导出",
-  "version": "1.0.2",
-  "description": "把当前小红书搜索结果里已经加载的笔记导出为 Excel",
+  "version": "1.1.0",
+  "description": "把当前小红书推荐或搜索结果里已经加载的笔记导出为 Excel",
   "permissions": ["scripting"],
   "host_permissions": [
     "https://www.xiaohongshu.com/*",
@@ -14,7 +14,7 @@
     "service_worker": "src/background.js"
   },
   "action": {
-    "default_title": "导出小红书搜索结果",
+    "default_title": "导出小红书笔记",
     "default_popup": "popup.html"
   },
   "content_scripts": [

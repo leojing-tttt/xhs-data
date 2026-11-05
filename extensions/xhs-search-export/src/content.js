@@ -3,7 +3,7 @@
   if (!api || window.__xhsSearchExportContent) return;
   window.__xhsSearchExportContent = true;
 
-  const store = api.createStore();
+  const session = api.createSession();
   const host = document.createElement('div');
   host.id = 'xhs-search-export-root';
   const shadow = host.attachShadow({ mode: 'open' });
@@ -21,6 +21,17 @@
     '  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);',
     '}',
     '.title { margin: 0 0 6px; font-weight: 600; }',
+    '.mode {',
+    '  display: inline-block;',
+    '  margin: 0 0 8px;',
+    '  padding: 2px 8px;',
+    '  border-radius: 999px;',
+    '  background: #fff1f2;',
+    '  color: #ff2442;',
+    '  font-size: 12px;',
+    '  font-weight: 600;',
+    '}',
+    '.mode.recommend { background: #f3f4f6; color: #111; }',
     '.count, .hint { margin: 0; }',
     '.hint { margin-top: 8px; color: #666; font-size: 12px; }',
     'button {',
@@ -40,7 +51,7 @@
   panel.className = 'panel';
   const title = document.createElement('p');
   title.className = 'title';
-  title.textContent = '小红书搜索导出';
+  title.textContent = '小红书导出';
   const body = document.createElement('div');
   panel.append(title, body);
   shadow.append(style, panel);
@@ -65,16 +76,31 @@
     host.style.setProperty('bottom', 'auto', 'important');
   }
 
+  function activeStore(page) {
+    return session.storeFor(page);
+  }
+
+  let seenMode = '';
+
+  function rememberLeaving(page) {
+    if (!page.mode || page.mode === seenMode) return;
+    if (seenMode) session.holdVisible(api.parseVisibleCards(document));
+    seenMode = page.mode;
+  }
+
   function paint(hintOverride) {
     const page = currentPage();
     if (!page.allowed) {
       host.remove();
       return;
     }
-    store.setKeyword(page.keyword);
-    if (!store.apiRecognized) store.useVisibleCards(document);
+    rememberLeaving(page);
+    const store = activeStore(page);
+    if (page.mode === 'search') store.setKeyword(page.keyword);
+    session.useVisibleCards(page, document);
     ensureHost();
-    const view = api.panelView(store.list().length);
+    const view = api.panelView(store.list().length, page);
+    title.textContent = view.title;
     if (hintOverride) view.hint = hintOverride;
     const parts = api.renderPanel(body, view);
     parts.button.addEventListener('click', function () {
@@ -87,8 +113,10 @@
     if (!page.allowed) {
       return { download: false, filename: '', message: page.message };
     }
-    store.setKeyword(page.keyword);
-    if (!store.apiRecognized) store.useVisibleCards(document);
+    rememberLeaving(page);
+    const store = activeStore(page);
+    if (page.mode === 'search') store.setKeyword(page.keyword);
+    session.useVisibleCards(page, document);
     const decision = api.decideExport({
       notes: store.list(),
       url: location.href,
@@ -100,7 +128,7 @@
       return decision;
     }
     try {
-      const bytes = api.workbookBytes(store.list(), globalThis.XLSX);
+      const bytes = api.workbookBytes(store.list(), globalThis.XLSX, { mode: page.mode });
       const blob = new Blob([bytes], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
@@ -134,25 +162,31 @@
       return;
     }
     if (data.type === 'url-change') {
-      store.setKeyword(page.keyword);
+      if (page.mode === 'search') activeStore(page).setKeyword(page.keyword);
       paint();
       return;
     }
-    if (data.type === 'search-notes-response') {
-      store.setKeyword(page.keyword);
-      store.ingestPayload(data.body);
-      paint();
-    }
+    const kind = data.type === 'feed-notes-response'
+      ? 'recommend'
+      : (data.type === 'search-notes-response' ? 'search' : '');
+    if (!kind || kind !== page.mode) return;
+    const store = activeStore(page);
+    if (page.mode === 'search') store.setKeyword(page.keyword);
+    store.ingestPayload(data.body);
+    paint();
   });
 
   if (globalThis.chrome && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
       const page = currentPage();
       if (!message || message.type === 'xhs-export-state') {
-        const view = api.panelView(page.allowed ? store.list().length : 0);
+        const view = api.panelView(page.allowed ? activeStore(page).list().length : 0, page);
         sendResponse({
           onSearchPage: page.allowed,
-          count: page.allowed ? store.list().length : 0,
+          onListPage: page.allowed,
+          mode: page.mode,
+          modeLabel: view.modeLabel,
+          count: page.allowed ? activeStore(page).list().length : 0,
           countText: view.countText,
           hint: view.hint,
           keyword: page.keyword,
@@ -167,20 +201,23 @@
 
   function boot() {
     const page = currentPage();
-    if (page.allowed) store.setKeyword(page.keyword);
+    if (page.mode === 'search') activeStore(page).setKeyword(page.keyword);
     paint();
     setInterval(function () {
       const href = location.href;
       if (href !== seenHref) {
         seenHref = href;
         const next = currentPage();
-        if (next.allowed) store.setKeyword(next.keyword);
+        if (next.mode === 'search') activeStore(next).setKeyword(next.keyword);
         paint();
         return;
       }
-      if (!currentPage().allowed) return;
+      const current = currentPage();
+      if (!current.allowed) return;
+      rememberLeaving(current);
+      const store = activeStore(current);
       if (!host.isConnected) paint();
-      else if (!store.apiRecognized) store.useVisibleCards(document);
+      else if (!store.apiRecognized) session.useVisibleCards(current, document);
       else ensureHost();
     }, 800);
   }

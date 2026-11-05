@@ -92,7 +92,7 @@ When('映射为Excel行并生成工作簿', function () {
   const notes = this.store.list();
   this.table = model.toTable(notes);
   const XLSX = require('../../extensions/xhs-search-export/vendor/xlsx.full.min.js');
-  const bytes = model.workbookBytes(notes, XLSX);
+  const bytes = model.workbookBytes(notes, XLSX, { mode: this.page && this.page.mode });
   const book = XLSX.read(bytes, { type: 'array' });
   const sheetName = book.SheetNames[0];
   this.workbookCheck = {
@@ -198,11 +198,42 @@ When('搜索关键词变为{string}', function (keyword) {
 });
 
 When('渲染页内面板', function () {
-  const view = model.panelView(this.store.list().length);
+  const page = this.pageUrl ? model.describePage(this.pageUrl) : null;
+  const view = model.panelView(this.store.list().length, page);
   const dom = new JSDOM('<!DOCTYPE html><div id="host"></div>');
   const host = dom.window.document.getElementById('host');
   this.panel = model.renderPanel(host, view);
   this.notice = view.hint || this.notice;
+});
+
+function exportSession(world) {
+  if (!world.exportSession) world.exportSession = model.createSession();
+  return world.exportSession;
+}
+
+When('把该响应作为{string}记入当前列表', function (label) {
+  const page = model.describePage(this.pageUrl);
+  const kind = label === '推荐' ? 'recommend' : 'search';
+  exportSession(this).ingest(page, this.payloadText, kind);
+  this.page = page;
+  this.store = exportSession(this).storeFor(page);
+});
+
+When('查看当前列表', function () {
+  const page = model.describePage(this.pageUrl);
+  this.page = page;
+  this.store = exportSession(this).storeFor(page);
+});
+
+When('把这些卡片记成刚离开的列表', function () {
+  exportSession(this).holdVisible(model.parseVisibleCards(this.document));
+});
+
+When('用仍在页面上的卡片刷新当前列表', function () {
+  const page = model.describePage(this.pageUrl);
+  this.page = page;
+  exportSession(this).useVisibleCards(page, this.document);
+  this.store = exportSession(this).storeFor(page);
 });
 
 Then('捕获到{int}条笔记', function (count) {
@@ -223,6 +254,10 @@ Then('第{int}条笔记的作者为{string}', function (index, author) {
 
 Then('第{int}条笔记的作者ID为{string}', function (index, authorId) {
   assert.equal(noteAt(this, index).authorId, authorId);
+});
+
+Then('第{int}条笔记的作者主页为{string}', function (index, profile) {
+  assert.equal(noteAt(this, index).profile || '', profile);
 });
 
 Then('第{int}条笔记的点赞数为{string}', function (index, likes) {
@@ -265,6 +300,12 @@ Then('第{int}条数据的标题为{string}', function (index, title) {
   assert.equal(this.table.rows[index - 1][column], title);
 });
 
+Then('第{int}条数据的作者主页为{string}', function (index, profile) {
+  const column = this.table.headers.indexOf('作者主页');
+  assert.ok(column >= 0, this.table.headers.join(','));
+  assert.equal(this.table.rows[index - 1][column] || '', profile);
+});
+
 Then('工作簿工作表名为{string}', function (name) {
   assert.equal(this.workbookCheck.sheetName, name);
 });
@@ -297,7 +338,11 @@ Then('提示包含{string}', function (text) {
 });
 
 Then('面板文案包含{string}', function (text) {
-  assert.ok(this.panel.count.textContent.includes(text), this.panel.count.textContent);
+  const parts = [this.panel.mode, this.panel.count, this.panel.hint]
+    .filter(Boolean)
+    .map((node) => node.textContent)
+    .join('\n');
+  assert.ok(parts.includes(text), parts);
 });
 
 Then('面板包含按钮{string}', function (label) {
@@ -314,6 +359,10 @@ Then('不可导出', function () {
 
 Then('关键词为{string}', function (keyword) {
   assert.equal(this.page.keyword, keyword);
+});
+
+Then('当前列表为{string}', function (label) {
+  assert.equal(this.page.label, label);
 });
 
 When('检查扩展清单是否注入{string}', function (url) {

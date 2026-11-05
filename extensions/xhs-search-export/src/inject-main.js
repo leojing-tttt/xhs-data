@@ -5,19 +5,24 @@
   const SOURCE = 'xhs-search-export';
   const MARK = '__xhsSearchExportHook';
 
-  function onSearchPage() {
+  function pageMode() {
     const host = location.hostname;
-    const knownHost = host === 'www.xiaohongshu.com' || host === 'xiaohongshu.com';
-    const path = location.pathname || '';
-    return knownHost && (path === '/search_result' || path.indexOf('/search_result/') === 0);
+    if (host !== 'www.xiaohongshu.com' && host !== 'xiaohongshu.com') return '';
+    const path = location.pathname || '/';
+    if (path === '/search_result' || path.indexOf('/search_result/') === 0) return 'search';
+    if (path === '/' || path === '/explore' || path === '/explore/') return 'recommend';
+    return '';
   }
 
-  function interesting(url) {
-    return typeof url === 'string' && url.indexOf('search/notes') !== -1;
+  function responseKind(url) {
+    const text = String(url || '');
+    if (text.indexOf('search/notes') !== -1) return 'search';
+    if (text.indexOf('/homefeed') !== -1) return 'recommend';
+    return '';
   }
 
   function emit(type, extra) {
-    if (type !== 'url-change' && !onSearchPage()) return;
+    if (type !== 'url-change' && !pageMode()) return;
     const message = { source: SOURCE, type: type };
     if (extra) {
       Object.keys(extra).forEach(function (key) {
@@ -35,8 +40,10 @@
   }
 
   function publish(url, body) {
-    if (!interesting(String(url)) || !body) return;
-    emit('search-notes-response', { url: String(url), body: body });
+    const kind = responseKind(url);
+    if (!kind || kind !== pageMode() || !body) return;
+    const type = kind === 'recommend' ? 'feed-notes-response' : 'search-notes-response';
+    emit(type, { url: String(url), body: body });
   }
 
   function readXhrBody(xhr) {
@@ -73,7 +80,7 @@
     return Promise.resolve(pending).then(function (response) {
       try {
         const url = requestUrl(args[0], response);
-        if (interesting(url) && response && typeof response.clone === 'function') {
+        if (responseKind(url) && response && typeof response.clone === 'function') {
           response.clone().text().then(function (text) {
             publish(url, text);
           }).catch(function () {});

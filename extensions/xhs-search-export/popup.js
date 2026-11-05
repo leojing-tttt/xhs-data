@@ -11,7 +11,8 @@
   }
 
   function showState(state) {
-    statusEl.textContent = state.countText;
+    const label = state.modeLabel ? state.modeLabel + ' · ' : '';
+    statusEl.textContent = label + state.countText;
     hintEl.textContent = state.hint || '';
     button.hidden = false;
   }
@@ -41,7 +42,7 @@
         chrome.tabs.sendMessage(tab.id, { type: 'xhs-export-run' }, function (result) {
           button.disabled = false;
           if (chrome.runtime.lastError || !result) {
-            hintEl.textContent = '没有完成导出。请刷新搜索结果页后再试。';
+            hintEl.textContent = '没有完成导出。请刷新当前页面后再试。';
             return;
           }
           hintEl.textContent = result.download

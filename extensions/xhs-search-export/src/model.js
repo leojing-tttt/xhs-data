@@ -8,9 +8,10 @@
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const EMPTY_EXPORT_MESSAGE = '还没有捕获到笔记。请先在搜索结果页向下浏览，等笔记出现在列表里后再导出。';
-  const NOT_SEARCH_MESSAGE = '当前页面不是小红书搜索结果页';
+  const RECOMMEND_EMPTY_MESSAGE = '还没有捕获到笔记。请先在推荐页向下浏览，等笔记出现在列表里后再导出。';
+  const NOT_SEARCH_MESSAGE = '当前页面不是小红书推荐页或搜索结果页';
   const OPTIONAL_COLUMNS = ['作者ID', '点赞数', '笔记类型', '封面图'];
-  const TEXT_COLUMNS = new Set(['笔记ID', '标题', '作者', '作者ID', '笔记类型', '封面图', '笔记链接']);
+  const TEXT_COLUMNS = new Set(['笔记ID', '标题', '作者', '作者ID', '作者主页', '笔记类型', '封面图', '笔记链接']);
 
   function createStore() {
     const notes = [];
@@ -140,10 +141,17 @@
     const typeField = readOwn(card, ['type', 'note_type', 'noteType']);
     const coverField = readCover(card);
     const token = firstValue(item.xsec_token, item.xsecToken, card.xsec_token, card.xsecToken);
+    const explicitProfile = readOwn(user, ['profile_url', 'profileUrl', 'homepage']);
+    const userToken = readOwn(user, ['xsec_token', 'xsecToken']);
     const note = {
       id: String(id),
       title: titleField.present ? String(titleField.value) : '',
       author: authorField.present ? String(authorField.value) : '',
+      profile: buildProfile(
+        authorIdField.present ? authorIdField.value : '',
+        explicitProfile.present ? explicitProfile.value : '',
+        userToken.present ? userToken.value : ''
+      ),
       link: buildLink(String(id), token),
       present: {
         作者ID: authorIdField.present,
@@ -233,6 +241,19 @@
     return base + '?xsec_token=' + encodeURIComponent(String(token)) + '&xsec_source=pc_search';
   }
 
+  function buildProfile(authorId, explicitUrl, token) {
+    if (explicitUrl) {
+      try {
+        const url = new URL(String(explicitUrl), 'https://www.xiaohongshu.com');
+        if (/^\/user\/profile\/[^/]+/.test(url.pathname)) return url.href;
+      } catch (error) {}
+    }
+    if (authorId == null || authorId === '') return '';
+    const base = 'https://www.xiaohongshu.com/user/profile/' + encodeURIComponent(String(authorId));
+    if (token == null || token === '') return base;
+    return base + '?xsec_token=' + encodeURIComponent(String(token)) + '&xsec_source=pc_feed';
+  }
+
   function parseVisibleCards(document) {
     if (!document || typeof document.querySelectorAll !== 'function') return [];
     const found = new Map();
@@ -283,6 +304,7 @@
         id: entry.id,
         title: entry.title,
         author: author.author,
+        profile: author.profile || buildProfile(author.authorId, ''),
         link: entry.link,
         present: {
           作者ID: Boolean(author.authorId),
@@ -334,9 +356,9 @@
       if (!url) continue;
       const match = url.pathname.match(/^\/user\/profile\/([0-9a-zA-Z]+)/);
       if (!match) continue;
-      return { author: elementText(link), authorId: match[1] };
+      return { author: elementText(link), authorId: match[1], profile: url.href };
     }
-    return { author: '', authorId: '' };
+    return { author: '', authorId: '', profile: '' };
   }
 
   function coverFrom(root, noteId) {
@@ -359,7 +381,10 @@
 
   function toTable(notes) {
     const headers = ['笔记ID', '标题', '作者'];
+    if (notes.some((note) => note.present && note.present['作者ID'])) headers.push('作者ID');
+    headers.push('作者主页');
     for (const header of OPTIONAL_COLUMNS) {
+      if (header === '作者ID') continue;
       if (notes.some((note) => note.present && note.present[header])) headers.push(header);
     }
     headers.push('笔记链接');
@@ -375,6 +400,7 @@
       case '标题': return note.title || '';
       case '作者': return note.author || '';
       case '作者ID': return note.authorId || '';
+      case '作者主页': return note.profile || '';
       case '点赞数': return note.likes == null ? '' : note.likes;
       case '笔记类型': return note.type || '';
       case '封面图': return note.cover || '';
@@ -383,7 +409,7 @@
     }
   }
 
-  function workbookBytes(notes, XLSXImpl) {
+  function workbookBytes(notes, XLSXImpl, options) {
     const XLSX = XLSXImpl || (typeof globalThis !== 'undefined' ? globalThis.XLSX : null);
     if (!XLSX || !XLSX.utils) {
       throw new Error('缺少本地 xlsx 库');
@@ -392,7 +418,8 @@
     const sheet = XLSX.utils.aoa_to_sheet([table.headers].concat(table.rows));
     forceTextColumns(XLSX, sheet, table.headers);
     const book = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(book, sheet, '搜索结果');
+    const mode = options && options.mode;
+    XLSX.utils.book_append_sheet(book, sheet, mode === 'recommend' ? '推荐' : '搜索结果');
     return XLSX.write(book, { bookType: 'xlsx', type: 'array' });
   }
 
@@ -412,13 +439,14 @@
     }
   }
 
-  function formatExportFilename(keyword, date) {
+  function formatExportFilename(keyword, date, mode) {
     const when = date instanceof Date ? date : new Date(date);
     const stamp = [
       String(when.getFullYear()),
       pad(when.getMonth() + 1),
       pad(when.getDate()),
     ].join('') + '-' + pad(when.getHours()) + pad(when.getMinutes());
+    if (mode === 'recommend') return '小红书推荐_' + stamp + '.xlsx';
     return '小红书搜索_' + safeKeyword(keyword) + '_' + stamp + '.xlsx';
   }
 
@@ -448,16 +476,54 @@
     }
     const path = parsed.pathname || '';
     const protocolOk = parsed.protocol === 'https:' || parsed.protocol === 'http:';
-    const allowed = protocolOk
-      && SEARCH_HOSTS[parsed.hostname]
-      && (path === '/search_result' || path.startsWith('/search_result/'));
-    if (!allowed) {
-      return { allowed: false, keyword: '', message: NOT_SEARCH_MESSAGE };
+    const mode = protocolOk && SEARCH_HOSTS[parsed.hostname] ? pageMode(path) : '';
+    if (!mode) {
+      return { allowed: false, mode: '', label: '', keyword: '', message: NOT_SEARCH_MESSAGE };
     }
     return {
       allowed: true,
-      keyword: parsed.searchParams.get('keyword') || '',
+      mode: mode,
+      label: mode === 'recommend' ? '推荐' : '搜索',
+      keyword: mode === 'search' ? (parsed.searchParams.get('keyword') || '') : '',
       message: '',
+    };
+  }
+
+  function pageMode(path) {
+    if (path === '/search_result' || path.startsWith('/search_result/')) return 'search';
+    if (path === '/' || path === '/explore' || path === '/explore/') return 'recommend';
+    return '';
+  }
+
+  function createSession() {
+    const search = createStore();
+    const recommend = createStore();
+    let held = null;
+    return {
+      storeFor(page) {
+        return page && page.mode === 'recommend' ? recommend : search;
+      },
+      ingest(page, payload, kind) {
+        if (!page || !page.allowed || page.mode !== kind) {
+          return { recognized: false, added: 0 };
+        }
+        return this.storeFor(page).ingestPayload(payload);
+      },
+      holdVisible(notes) {
+        held = new Set((notes || []).map(function (note) { return note.id; }));
+      },
+      useVisibleCards(page, document) {
+        const store = this.storeFor(page);
+        if (!page || !page.allowed || store.apiRecognized) return { used: false, added: 0 };
+        const visible = parseVisibleCards(document);
+        if (held && visible.length && visible.every(function (note) { return held.has(note.id); })) {
+          return { used: false, added: 0 };
+        }
+        held = null;
+        const before = store.list().length;
+        store.useVisibleCards(document);
+        return { used: true, added: store.list().length - before };
+      },
     };
   }
 
@@ -560,27 +626,44 @@
       return { download: false, filename: '', message: page.message };
     }
     if (!notes.length) {
-      return { download: false, filename: '', message: EMPTY_EXPORT_MESSAGE };
+      return { download: false, filename: '', message: emptyMessage(page.mode) };
     }
     const keyword = options && options.keyword ? options.keyword : page.keyword;
     return {
       download: true,
-      filename: formatExportFilename(keyword, options.now || new Date()),
+      filename: formatExportFilename(keyword, options.now || new Date(), page.mode),
       message: '',
     };
   }
 
-  function panelView(count) {
+  function emptyMessage(mode) {
+    return mode === 'recommend' ? RECOMMEND_EMPTY_MESSAGE : EMPTY_EXPORT_MESSAGE;
+  }
+
+  function panelView(count, page) {
+    const mode = page && page.mode === 'recommend' ? 'recommend' : 'search';
+    const label = mode === 'recommend' ? '推荐' : '搜索';
     return {
+      mode: mode,
+      modeLabel: label,
+      title: mode === 'recommend' ? '导出推荐' : '导出搜索',
       countText: '已捕获 ' + count + ' 条笔记',
       buttonText: '导出 Excel',
-      hint: count === 0 ? EMPTY_EXPORT_MESSAGE : '',
+      hint: count === 0
+        ? emptyMessage(mode)
+        : (mode === 'recommend'
+          ? '当前只导出推荐列表，不会带上搜索结果。'
+          : '当前只导出这次搜索，不会带上推荐页。'),
     };
   }
 
   function renderPanel(container, view) {
     const doc = container.ownerDocument;
     container.textContent = '';
+    const mode = doc.createElement('p');
+    mode.className = 'mode' + (view.mode === 'recommend' ? ' recommend' : '');
+    mode.setAttribute('data-role', 'mode');
+    mode.textContent = view.modeLabel || '搜索';
     const count = doc.createElement('p');
     count.setAttribute('data-role', 'count');
     count.textContent = view.countText;
@@ -591,14 +674,16 @@
     const hint = doc.createElement('p');
     hint.setAttribute('data-role', 'hint');
     hint.textContent = view.hint || '';
-    container.append(count, button, hint);
-    return { count, button, hint };
+    container.append(mode, count, button, hint);
+    return { mode, count, button, hint };
   }
 
   return {
     EMPTY_EXPORT_MESSAGE,
+    RECOMMEND_EMPTY_MESSAGE,
     NOT_SEARCH_MESSAGE,
     createStore,
+    createSession,
     parseSearchResponse,
     parseVisibleCards,
     toTable,
