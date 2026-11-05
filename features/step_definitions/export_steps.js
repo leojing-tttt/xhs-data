@@ -374,6 +374,10 @@ Given('补齐过程中改去{string}', function (url) {
   this.leaveTo = url;
 });
 
+Given('下一页第一次没有响应', function () {
+  this.dropFirstResponse = 1;
+});
+
 When('按目标条数{string}补齐当前列表', async function (target) {
   const session = exportSession(this);
   const page = model.describePage(this.pageUrl);
@@ -406,9 +410,15 @@ When('按目标条数{string}补齐当前列表', async function (target) {
       this.maxInFlight = Math.max(this.maxInFlight, inFlight);
       this.sentRequests.push(request);
       if (this.leaveTo) this.pageUrl = this.leaveTo;
+      if (this.dropFirstResponse) {
+        this.dropFirstResponse -= 1;
+        inFlight -= 1;
+        return { timedOut: true };
+      }
       const next = script.shift();
       if (next) session.ingest(page, readFixture(next), page.mode);
       inFlight -= 1;
+      return { timedOut: false };
     }.bind(this),
     scroll: async function () {
       this.scrolls += 1;
@@ -436,6 +446,19 @@ Then('滚动了{int}次', function (count) {
 
 Then('下一页请求地址包含{string}', function (text) {
   assert.ok(this.sentRequests.some((request) => String(request.url).includes(text)), JSON.stringify(this.sentRequests));
+});
+
+Then('第{int}次下一页请求体包含{string}', function (index, text) {
+  assert.ok(this.sentRequests[index - 1], '没有第 ' + index + ' 次请求');
+  assert.ok(String(this.sentRequests[index - 1].body).includes(text), this.sentRequests[index - 1].body);
+});
+
+Then('第{int}条数据的点赞数为{string}', function (index, likes) {
+  const headers = this.workbookCheck.aoa[0];
+  const column = headers.indexOf('点赞数');
+  assert.ok(column >= 0, '没有点赞数列');
+  const cell = this.workbookCheck.aoa[index][column];
+  assert.equal(cell == null ? '' : String(cell), likes);
 });
 
 Then('下一页请求体包含{string}', function (text) {

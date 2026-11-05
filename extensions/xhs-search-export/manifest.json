@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "小红书搜索导出",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "按填写的条数，把当前小红书推荐或搜索结果导出为 Excel",
   "permissions": ["scripting"],
   "host_permissions": [

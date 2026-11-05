@@ -134,11 +134,11 @@
   function waitForList(start) {
     return new Promise(function (resolve) {
       let settled = false;
-      function finish() {
+      function finish(result) {
         if (settled) return;
         settled = true;
         window.removeEventListener('message', onMessage);
-        resolve();
+        resolve(result || { timedOut: false });
       }
       function onMessage(event) {
         if (event.origin && event.origin !== location.origin) return;
@@ -156,7 +156,7 @@
         finish();
         return;
       }
-      setTimeout(finish, 2500);
+      setTimeout(function () { finish({ timedOut: true }); }, 8000);
     });
   }
 

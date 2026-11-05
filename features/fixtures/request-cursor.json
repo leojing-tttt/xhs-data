@@ -1,0 +1,5 @@
+{
+  "url": "https://edith.xiaohongshu.com/api/sns/web/v1/homefeed",
+  "method": "POST",
+  "body": "{\"cursor_score\":\"\",\"num\":20,\"refresh_type\":1,\"note_index\":0}"
+}

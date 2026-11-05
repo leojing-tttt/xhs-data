@@ -34,10 +34,15 @@
     function addNotes(list) {
       let added = 0;
       for (const note of list) {
-        if (!note || !note.id || index.has(note.id)) continue;
-        index.set(note.id, note);
-        notes.push(note);
-        added += 1;
+        if (!note || !note.id) continue;
+        const existing = index.get(note.id);
+        if (!existing) {
+          index.set(note.id, note);
+          notes.push(note);
+          added += 1;
+          continue;
+        }
+        fillMissing(existing, note);
       }
       return added;
     }
@@ -143,7 +148,7 @@
     const titleField = readOwn(card, ['display_title', 'displayTitle', 'title']);
     const authorField = readOwn(user, ['nickname', 'nick_name', 'nickName', 'name']);
     const authorIdField = readOwn(user, ['user_id', 'userid', 'userId']);
-    const likesField = readLikes(card);
+    const likesField = readLikes(card, item);
     const typeField = readOwn(card, ['type', 'note_type', 'noteType']);
     const coverField = readCover(card);
     const token = firstValue(item.xsec_token, item.xsecToken, card.xsec_token, card.xsecToken);
@@ -173,11 +178,35 @@
     return note;
   }
 
-  function readLikes(card) {
-    const interact = card.interact_info || card.interactInfo;
-    const fromInteract = readOwn(interact, ['liked_count', 'likedCount']);
-    if (fromInteract.present) return fromInteract;
-    return readOwn(card, ['liked_count', 'likedCount']);
+  const LIKE_KEYS = ['liked_count', 'likedCount', 'like_count', 'likeCount', 'likes', 'like'];
+
+  function readLikes(card, item) {
+    const containers = [];
+    [card, item].forEach(function (source) {
+      if (!source || typeof source !== 'object') return;
+      containers.push(source.interact_info, source.interactInfo, source.interaction, source);
+    });
+    for (let index = 0; index < containers.length; index += 1) {
+      const found = readOwn(containers[index], LIKE_KEYS);
+      if (found.present || found.zero) return { present: true, value: found.value };
+    }
+    return { present: false, value: undefined };
+  }
+
+  function fillMissing(existing, incoming) {
+    if (!existing.present) existing.present = {};
+    const incomingPresent = incoming.present || {};
+    ['点赞数', '作者ID', '笔记类型', '封面图'].forEach(function (key) {
+      if (existing.present[key] || !incomingPresent[key]) return;
+      existing.present[key] = true;
+      if (key === '点赞数') existing.likes = incoming.likes;
+      if (key === '作者ID') existing.authorId = incoming.authorId;
+      if (key === '笔记类型') existing.type = incoming.type;
+      if (key === '封面图') existing.cover = incoming.cover;
+    });
+    if (!existing.profile && incoming.profile) existing.profile = incoming.profile;
+    if (!existing.author && incoming.author) existing.author = incoming.author;
+    if (!existing.title && incoming.title) existing.title = incoming.title;
   }
 
   function readCover(card) {
@@ -221,6 +250,7 @@
       if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
       const value = obj[key];
       if (value == null || value === '') continue;
+      if (value === 0 || value === '0') return { present: true, zero: true, value: value };
       return { present: true, value };
     }
     return { present: false, value: undefined };
@@ -306,6 +336,7 @@
     for (const entry of found.values()) {
       const author = authorFrom(entry.root);
       const cover = coverFrom(entry.root, entry.id);
+      const likes = likesFrom(entry.root);
       const note = {
         id: entry.id,
         title: entry.title,
@@ -314,12 +345,13 @@
         link: entry.link,
         present: {
           作者ID: Boolean(author.authorId),
-          点赞数: false,
+          点赞数: likes.present,
           笔记类型: false,
           封面图: Boolean(cover),
         },
       };
       if (author.authorId) note.authorId = author.authorId;
+      if (likes.present) note.likes = likes.value;
       if (cover) note.cover = cover;
       notes.push(note);
     }
@@ -365,6 +397,15 @@
       return { author: elementText(link), authorId: match[1], profile: url.href };
     }
     return { author: '', authorId: '', profile: '' };
+  }
+
+  function likesFrom(root) {
+    if (!root || !root.querySelector) return { present: false, value: undefined };
+    const node = root.querySelector('.like-wrapper .count');
+    if (!node) return { present: false, value: undefined };
+    const text = elementText(node);
+    if (!text) return { present: false, value: undefined };
+    return { present: true, value: text };
   }
 
   function coverFrom(root, noteId) {
@@ -502,7 +543,49 @@
   }
 
   function blankPageState() {
-    return { hasMore: null, cursor: '', searchId: '' };
+    return { hasMore: null, cursor: '', cursorRaw: '', searchId: '' };
+  }
+
+  function cursorFromText(text) {
+    const specific = /"(cursor_score|cursorScore|next_cursor|nextCursor)"\s*:\s*("(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(text);
+    const itemsAt = text.indexOf('"items"');
+    const head = itemsAt === -1 ? text : text.slice(0, itemsAt);
+    const generic = /"(cursor)"\s*:\s*("(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(head);
+    const match = specific || generic;
+    if (!match) return null;
+    const raw = match[2];
+    if (raw.charAt(0) === '"') {
+      try {
+        return { value: JSON.parse(raw), raw: raw };
+      } catch (error) {
+        return { value: raw.slice(1, -1), raw: raw };
+      }
+    }
+    return { value: raw, raw: raw };
+  }
+
+  function jsonField(body, key) {
+    const match = new RegExp('"' + key + '"\\s*:\\s*("(?:\\\\.|[^"\\\\])*"|-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)').exec(body);
+    if (!match) return null;
+    return match[1];
+  }
+
+  function comparable(raw) {
+    if (!raw) return '';
+    if (raw.charAt(0) === '"') {
+      try {
+        return JSON.parse(raw);
+      } catch (error) {
+        return raw.slice(1, -1);
+      }
+    }
+    return raw;
+  }
+
+  function replaceField(body, key, rawLiteral) {
+    const pattern = new RegExp('("' + key + '"\\s*:\\s*)("(?:\\\\.|[^"\\\\])*"|-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)');
+    if (!pattern.test(body)) return body;
+    return body.replace(pattern, '$1' + rawLiteral);
   }
 
   function firstText(root, keys) {
@@ -530,16 +613,27 @@
     if (data.data && typeof data.data === 'object') roots.push(data.data);
     let hasMore = null;
     let cursor = '';
+    let cursorRaw = '';
     let searchId = '';
+    if (typeof payload === 'string') {
+      const found = cursorFromText(payload);
+      if (found && found.value !== '') {
+        cursor = String(found.value);
+        cursorRaw = found.raw;
+      }
+    }
     roots.forEach(function (root) {
       if (hasMore === null) {
         if (typeof root.has_more === 'boolean') hasMore = root.has_more;
         else if (typeof root.hasMore === 'boolean') hasMore = root.hasMore;
       }
-      if (!cursor) cursor = firstText(root, ['cursor_score', 'cursorScore', 'cursor', 'next_cursor', 'nextCursor']);
+      if (!cursor) {
+        cursor = firstText(root, ['cursor_score', 'cursorScore', 'cursor', 'next_cursor', 'nextCursor']);
+        if (cursor) cursorRaw = JSON.stringify(cursor);
+      }
       if (!searchId) searchId = firstText(root, ['search_id', 'searchId']);
     });
-    return { hasMore: hasMore, cursor: cursor, searchId: searchId };
+    return { hasMore: hasMore, cursor: cursor, cursorRaw: cursorRaw, searchId: searchId };
   }
 
   function bumpPage(value) {
@@ -550,48 +644,43 @@
 
   function buildNextPageRequest(last, state, capturedCount) {
     if (!last || !last.url || typeof last.body !== 'string' || !last.body) return null;
-    let data;
-    try {
-      data = JSON.parse(last.body);
-    } catch (error) {
-      return null;
-    }
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
-    const next = JSON.parse(JSON.stringify(data));
+    let body = last.body;
     const cursorKeys = ['cursor_score', 'cursorScore', 'cursor', 'next_cursor', 'nextCursor'];
-    const hasCursorKey = cursorKeys.some(function (key) {
-      return Object.prototype.hasOwnProperty.call(next, key);
-    });
-    if (hasCursorKey) {
-      if (!state || !state.cursor) return null;
-      let advanced = false;
-      cursorKeys.forEach(function (key) {
-        if (!Object.prototype.hasOwnProperty.call(next, key)) return;
-        if (String(next[key]) !== String(state.cursor)) {
-          next[key] = state.cursor;
-          advanced = true;
-        }
-      });
-      if (!advanced) return null;
+    const presentCursor = cursorKeys.filter(function (key) { return jsonField(body, key) != null; });
+    let changed = false;
+    let cursorStuck = false;
+    if (presentCursor.length) {
+      const current = comparable(jsonField(body, presentCursor[0]));
+      if (!state || !state.cursor || String(current) === String(state.cursor)) {
+        cursorStuck = true;
+      } else {
+        const literal = state.cursorRaw || JSON.stringify(state.cursor);
+        presentCursor.forEach(function (key) {
+          body = replaceField(body, key, literal);
+        });
+        changed = true;
+      }
     }
     ['page', 'page_num', 'pageNum'].forEach(function (key) {
-      if (!Object.prototype.hasOwnProperty.call(next, key)) return;
-      const bumped = bumpPage(next[key]);
-      if (bumped != null) next[key] = bumped;
+      const raw = jsonField(body, key);
+      if (raw == null || !/^-?\d+$/.test(raw)) return;
+      body = replaceField(body, key, String(Number(raw) + 1));
+      changed = true;
+      cursorStuck = false;
     });
+    if (!changed) return cursorStuck ? { blocked: '游标没有继续往后' } : null;
     ['note_index', 'noteIndex'].forEach(function (key) {
-      if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = capturedCount;
+      if (jsonField(body, key) != null) body = replaceField(body, key, String(capturedCount));
     });
     ['refresh_type', 'refreshType'].forEach(function (key) {
-      if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = 3;
+      if (jsonField(body, key) != null) body = replaceField(body, key, '3');
     });
     if (state && state.searchId) {
       ['search_id', 'searchId'].forEach(function (key) {
-        if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = state.searchId;
+        if (jsonField(body, key) != null) body = replaceField(body, key, JSON.stringify(state.searchId));
       });
     }
-    const body = JSON.stringify(next);
-    if (body === last.body) return null;
+    if (body === last.body) return cursorStuck ? { blocked: '游标没有继续往后' } : null;
     return { url: last.url, method: last.method || 'POST', body: body };
   }
 
@@ -674,6 +763,8 @@
     }
     async function run() {
       let emptyRounds = 0;
+      let timedOutRounds = 0;
+      let cursorStuckRounds = 0;
       let asked = 0;
       let lastTick = null;
       notify();
@@ -685,6 +776,7 @@
         if (state.hasMore === false) return finish(asked, '接口没有更多了', true);
         if (emptyRounds >= EMPTY_ROUND_LIMIT) return finish(asked, '连续几次没有新笔记', true);
         const request = session.nextPageRequest(page);
+        const cursorStuck = !request && session.blockReason() === '游标没有继续往后';
         if (lastTick !== null) {
           const elapsed = stamp() - lastTick;
           if (elapsed < gap) await sleep(gap - elapsed);
@@ -695,11 +787,16 @@
         const before = store.list().length;
         asked += 1;
         lastTick = stamp();
+        let timedOut = false;
         if (request) {
+          const previous = session.currentRequest(page);
           session.notePageRequest(page, request);
-          if (opts.send) await opts.send(request);
+          const outcome = opts.send ? await opts.send(request) : null;
+          timedOut = Boolean(outcome && outcome.timedOut);
+          if (timedOut && previous) session.notePageRequest(page, previous);
         } else if (opts.scroll) {
-          await opts.scroll();
+          const outcome = await opts.scroll();
+          timedOut = Boolean(outcome && outcome.timedOut);
         } else {
           emptyRounds += 1;
           continue;
@@ -707,9 +804,19 @@
         if (opts.pageNow && opts.pageNow().mode !== page.mode) {
           return finish(asked, PAGE_LEFT_MESSAGE, false);
         }
-        if (store.list().length <= before) emptyRounds += 1;
-        else emptyRounds = 0;
+        if (timedOut && store.list().length <= before) {
+          timedOutRounds += 1;
+        } else if (store.list().length <= before) {
+          emptyRounds += 1;
+          if (cursorStuck) cursorStuckRounds += 1;
+        } else {
+          emptyRounds = 0;
+          timedOutRounds = 0;
+          cursorStuckRounds = 0;
+        }
         notify();
+        if (timedOutRounds >= 4) return finish(asked, '没有等到下一页响应', true);
+        if (cursorStuckRounds >= EMPTY_ROUND_LIMIT) return finish(asked, '游标没有继续往后', true);
       }
       return finish(asked, '', true);
     }
@@ -722,6 +829,7 @@
     const requests = { search: null, recommend: null };
     const states = { search: blankPageState(), recommend: blankPageState() };
     let held = null;
+    let blocked = '';
     function modeOf(page) {
       return page && page.mode === 'recommend' ? 'recommend' : 'search';
     }
@@ -731,7 +839,20 @@
       },
       pageState(page) {
         const current = states[modeOf(page)];
-        return { hasMore: current.hasMore, cursor: current.cursor, searchId: current.searchId };
+        return {
+          hasMore: current.hasMore,
+          cursor: current.cursor,
+          cursorRaw: current.cursorRaw,
+          searchId: current.searchId,
+        };
+      },
+      blockReason() {
+        return blocked;
+      },
+      currentRequest(page) {
+        if (!page || !requests[page.mode]) return null;
+        const current = requests[page.mode];
+        return { url: current.url, method: current.method, body: current.body };
       },
       notePageRequest(page, request) {
         if (!page || (page.mode !== 'search' && page.mode !== 'recommend') || !request) return;
@@ -742,9 +863,13 @@
         };
       },
       nextPageRequest(page) {
+        blocked = '';
         if (!page || (page.mode !== 'search' && page.mode !== 'recommend')) return null;
         if (states[page.mode].hasMore === false) return null;
-        return buildNextPageRequest(requests[page.mode], states[page.mode], this.storeFor(page).list().length);
+        const built = buildNextPageRequest(requests[page.mode], states[page.mode], this.storeFor(page).list().length);
+        if (built && built.url) return built;
+        blocked = built && built.blocked ? built.blocked : '';
+        return null;
       },
       ingest(page, payload, kind) {
         if (!page || !page.allowed || page.mode !== kind) {
@@ -755,7 +880,10 @@
           const read = readPageState(payload);
           const current = states[page.mode];
           if (read.hasMore !== null) current.hasMore = read.hasMore;
-          if (read.cursor) current.cursor = read.cursor;
+          if (read.cursor) {
+            current.cursor = read.cursor;
+            current.cursorRaw = read.cursorRaw || JSON.stringify(read.cursor);
+          }
           if (read.searchId) current.searchId = read.searchId;
         }
         return result;

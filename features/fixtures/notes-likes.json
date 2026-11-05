@@ -1,0 +1,53 @@
+{
+  "code": 0,
+  "success": true,
+  "data": {
+    "has_more": false,
+    "items": [
+      {
+        "id": "likezero0000000000001",
+        "model_type": "note",
+        "note_card": {
+          "display_title": "点赞是零",
+          "user": { "nickname": "零作者" },
+          "interact_info": { "liked_count": 0 }
+        }
+      },
+      {
+        "id": "likename0000000000001",
+        "model_type": "note",
+        "note_card": {
+          "display_title": "点赞字段是 likes",
+          "user": { "nickname": "赞作者" },
+          "likes": "6"
+        }
+      },
+      {
+        "id": "likeitem0000000000001",
+        "model_type": "note",
+        "interact_info": { "liked_count": "4" },
+        "note_card": {
+          "display_title": "点赞在外层",
+          "user": { "nickname": "外层作者" }
+        }
+      },
+      {
+        "id": "likecamel000000000001",
+        "model_type": "note",
+        "note_card": {
+          "display_title": "驼峰点赞是零",
+          "user": { "nickname": "驼峰作者" },
+          "interactInfo": { "likedCount": "0" }
+        }
+      },
+      {
+        "id": "likemiss0000000000001",
+        "model_type": "note",
+        "note_card": {
+          "display_title": "没有点赞字段",
+          "user": { "nickname": "缺作者" }
+        }
+      }
+    ]
+  }
+}
