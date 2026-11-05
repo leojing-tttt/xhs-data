@@ -1,0 +1,25 @@
+{
+  "name": "xhs-data",
+  "version": "1.0.0",
+  "description": "",
+  "private": true,
+  "scripts": {
+    "test": "cucumber-js --format progress"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leojing-tttt/xhs-data.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/leojing-tttt/xhs-data/issues"
+  },
+  "homepage": "https://github.com/leojing-tttt/xhs-data#readme",
+  "devDependencies": {
+    "@cucumber/cucumber": "^10.9.0",
+    "jsdom": "^25.0.1",
+    "xlsx": "^0.18.5"
+  }
+}

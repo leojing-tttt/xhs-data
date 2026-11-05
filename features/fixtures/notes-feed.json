@@ -1,0 +1,28 @@
+{
+  "code": 0,
+  "success": true,
+  "data": {
+    "has_more": true,
+    "cursor_score": "c-next",
+    "items": [
+      {
+        "id": "66dee9a10000000012011511",
+        "model_type": "note",
+        "note_card": {
+          "type": "normal",
+          "display_title": "大平层装修避坑",
+          "user": { "user_id": "user_1", "nickname": "装修日记" }
+        }
+      },
+      {
+        "id": "6480be44000000001300b41e",
+        "model_type": "note",
+        "note_card": {
+          "type": "video",
+          "display_title": "大平层装修记录",
+          "user": { "user_id": "user_2", "nickname": "视频作者" }
+        }
+      }
+    ]
+  }
+}

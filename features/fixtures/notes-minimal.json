@@ -1,0 +1,18 @@
+{
+  "code": 0,
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": "minnote0000000000000001",
+        "model_type": "note",
+        "note_card": {
+          "display_title": "只有标题和作者",
+          "user": {
+            "nickname": "简作者"
+          }
+        }
+      }
+    ]
+  }
+}

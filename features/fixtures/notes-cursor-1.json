@@ -1,0 +1,20 @@
+{
+  "code": 0,
+  "success": true,
+  "data": {
+    "has_more": true,
+    "cursor_score": 1793858835957003001,
+    "items": [
+      {
+        "id": "cnote0000000000000001",
+        "model_type": "note",
+        "note_card": { "display_title": "游标一", "user": { "nickname": "甲" } }
+      },
+      {
+        "id": "cnote0000000000000002",
+        "model_type": "note",
+        "note_card": { "display_title": "游标二", "user": { "nickname": "乙" } }
+      }
+    ]
+  }
+}

@@ -1,0 +1,1100 @@
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) {
+    module.exports = api;
+  }
+  if (root) {
+    root.XhsSearchExport = api;
+  }
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  const EMPTY_EXPORT_MESSAGE = '还没有捕获到笔记。请先在搜索结果页向下浏览，等笔记出现在列表里后再导出。';
+  const RECOMMEND_EMPTY_MESSAGE = '还没有捕获到笔记。请先在推荐页向下浏览，等笔记出现在列表里后再导出。';
+  const NOT_SEARCH_MESSAGE = '当前页面不是小红书推荐页或搜索结果页';
+  const INVALID_TARGET_MESSAGE = '请输入 1 到 2000 的整数';
+  const PAGE_LEFT_MESSAGE = '页面已切换，已停止继续加载';
+  const DEFAULT_TARGET = 100;
+  const MAX_TARGET = 2000;
+  const EMPTY_ROUND_LIMIT = 3;
+  const MIN_GAP_MS = 1000;
+  const OPTIONAL_COLUMNS = ['作者ID', '点赞数', '笔记类型', '封面图'];
+  const TEXT_COLUMNS = new Set(['笔记ID', '标题', '作者', '作者ID', '作者主页', '笔记类型', '封面图', '笔记链接']);
+
+  function createStore() {
+    const notes = [];
+    const index = new Map();
+    let apiRecognized = false;
+    let keyword = null;
+
+    function reset() {
+      notes.length = 0;
+      index.clear();
+      apiRecognized = false;
+    }
+
+    function addNotes(list) {
+      let added = 0;
+      for (const note of list) {
+        if (!note || !note.id) continue;
+        const existing = index.get(note.id);
+        if (!existing) {
+          index.set(note.id, note);
+          notes.push(note);
+          added += 1;
+          continue;
+        }
+        fillMissing(existing, note);
+      }
+      return added;
+    }
+
+    return {
+      get apiRecognized() {
+        return apiRecognized;
+      },
+      list() {
+        return notes.slice();
+      },
+      get keyword() {
+        return keyword || '';
+      },
+      setKeyword(next) {
+        const value = next == null ? '' : String(next);
+        if (keyword === null) {
+          keyword = value;
+          return;
+        }
+        if (!value || value === keyword) return;
+        keyword = value;
+        reset();
+      },
+      ingestPayload(payload) {
+        const parsed = parseSearchResponse(payload);
+        if (!parsed.recognized) {
+          return { recognized: false, added: 0 };
+        }
+        apiRecognized = true;
+        return { recognized: true, added: addNotes(parsed.notes) };
+      },
+      useVisibleCards(document) {
+        if (apiRecognized) {
+          return { used: false, added: 0 };
+        }
+        const visible = parseVisibleCards(document);
+        return { used: true, added: addNotes(visible) };
+      },
+    };
+  }
+
+  function parseSearchResponse(payload) {
+    let data = payload;
+    if (typeof payload === 'string') {
+      const text = payload.trim();
+      if (!text) return { recognized: false, notes: [] };
+      try {
+        data = JSON.parse(text);
+      } catch (error) {
+        return { recognized: false, notes: [] };
+      }
+    }
+    if (!data || typeof data !== 'object') {
+      return { recognized: false, notes: [] };
+    }
+    const items = findItems(data);
+    if (!items) return { recognized: false, notes: [] };
+    const notes = [];
+    const seen = new Set();
+    for (const item of items) {
+      const note = noteFromItem(item);
+      if (!note || seen.has(note.id)) continue;
+      seen.add(note.id);
+      notes.push(note);
+    }
+    return { recognized: true, notes };
+  }
+
+  function findItems(data) {
+    const roots = [data];
+    if (data.data && typeof data.data === 'object') roots.push(data.data);
+    for (const candidate of roots) {
+      if (Array.isArray(candidate.items)) return candidate.items;
+      if (Array.isArray(candidate.notes)) return candidate.notes;
+    }
+    return null;
+  }
+
+  function noteFromItem(item) {
+    if (!item || typeof item !== 'object') return null;
+    const modelType = ownField(item, ['model_type', 'modelType']);
+    if (modelType.present && modelType.value !== 'note') return null;
+    const card = item.note_card || item.noteCard || item.note || item;
+    if (!card || typeof card !== 'object') return null;
+    if (card === item && !item.note_card && !item.noteCard && !item.note && !ownField(item, ['display_title', 'displayTitle', 'title', 'note_id', 'noteId']).present) {
+      return null;
+    }
+    return fieldsFromCard(card, item);
+  }
+
+  function fieldsFromCard(card, item) {
+    const id = firstValue(
+      card.note_id,
+      card.noteId,
+      card.id,
+      item === card ? undefined : item.id,
+      item.note_id,
+      item.noteId
+    );
+    if (id == null || id === '') return null;
+    const user = card.user || card.user_info || card.userInfo || {};
+    const titleField = readOwn(card, ['display_title', 'displayTitle', 'title']);
+    const authorField = readOwn(user, ['nickname', 'nick_name', 'nickName', 'name']);
+    const authorIdField = readOwn(user, ['user_id', 'userid', 'userId']);
+    const likesField = readLikes(card, item);
+    const typeField = readOwn(card, ['type', 'note_type', 'noteType']);
+    const coverField = readCover(card);
+    const token = firstValue(item.xsec_token, item.xsecToken, card.xsec_token, card.xsecToken);
+    const explicitProfile = readOwn(user, ['profile_url', 'profileUrl', 'homepage']);
+    const userToken = readOwn(user, ['xsec_token', 'xsecToken']);
+    const note = {
+      id: String(id),
+      title: titleField.present ? String(titleField.value) : '',
+      author: authorField.present ? String(authorField.value) : '',
+      profile: buildProfile(
+        authorIdField.present ? authorIdField.value : '',
+        explicitProfile.present ? explicitProfile.value : '',
+        userToken.present ? userToken.value : ''
+      ),
+      link: buildLink(String(id), token),
+      present: {
+        作者ID: authorIdField.present,
+        点赞数: likesField.present,
+        笔记类型: typeField.present,
+        封面图: coverField.present,
+      },
+    };
+    if (authorIdField.present) note.authorId = String(authorIdField.value);
+    if (likesField.present) note.likes = likesField.value;
+    if (typeField.present) note.type = mapType(typeField.value);
+    if (coverField.present) note.cover = String(coverField.value);
+    return note;
+  }
+
+  const LIKE_KEYS = ['liked_count', 'likedCount', 'like_count', 'likeCount', 'likes', 'like'];
+
+  function readLikes(card, item) {
+    const containers = [];
+    [card, item].forEach(function (source) {
+      if (!source || typeof source !== 'object') return;
+      containers.push(source.interact_info, source.interactInfo, source.interaction, source);
+    });
+    for (let index = 0; index < containers.length; index += 1) {
+      const found = readOwn(containers[index], LIKE_KEYS);
+      if (found.present || found.zero) return { present: true, value: found.value };
+    }
+    return { present: false, value: undefined };
+  }
+
+  function fillMissing(existing, incoming) {
+    if (!existing.present) existing.present = {};
+    const incomingPresent = incoming.present || {};
+    ['点赞数', '作者ID', '笔记类型', '封面图'].forEach(function (key) {
+      if (existing.present[key] || !incomingPresent[key]) return;
+      existing.present[key] = true;
+      if (key === '点赞数') existing.likes = incoming.likes;
+      if (key === '作者ID') existing.authorId = incoming.authorId;
+      if (key === '笔记类型') existing.type = incoming.type;
+      if (key === '封面图') existing.cover = incoming.cover;
+    });
+    if (!existing.profile && incoming.profile) existing.profile = incoming.profile;
+    if (!existing.author && incoming.author) existing.author = incoming.author;
+    if (!existing.title && incoming.title) existing.title = incoming.title;
+  }
+
+  function readCover(card) {
+    const cover = card.cover;
+    const urlKeys = ['url_default', 'urlDefault', 'url', 'url_pre', 'urlPre'];
+    if (cover && typeof cover === 'object') {
+      const direct = readOwn(cover, urlKeys);
+      if (direct.present) return direct;
+      const nested = firstInfoUrl(cover.info_list || cover.infoList);
+      if (nested.present) return nested;
+    }
+    if (typeof cover === 'string' && cover) return { present: true, value: cover };
+    const images = card.image_list || card.imageList;
+    if (Array.isArray(images)) {
+      for (const image of images) {
+        const direct = readOwn(image, urlKeys);
+        if (direct.present) return direct;
+        const nested = firstInfoUrl(image && (image.info_list || image.infoList));
+        if (nested.present) return nested;
+      }
+    }
+    return { present: false, value: undefined };
+  }
+
+  function firstInfoUrl(list) {
+    if (!Array.isArray(list)) return { present: false, value: undefined };
+    for (const info of list) {
+      const found = readOwn(info, ['url']);
+      if (found.present) return found;
+    }
+    return { present: false, value: undefined };
+  }
+
+  function ownField(obj, keys) {
+    return readOwn(obj, keys);
+  }
+
+  function readOwn(obj, keys) {
+    if (!obj || typeof obj !== 'object') return { present: false, value: undefined };
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+      const value = obj[key];
+      if (value == null || value === '') continue;
+      if (value === 0 || value === '0') return { present: true, zero: true, value: value };
+      return { present: true, value };
+    }
+    return { present: false, value: undefined };
+  }
+
+  function firstValue() {
+    for (let i = 0; i < arguments.length; i += 1) {
+      const value = arguments[i];
+      if (value != null && value !== '') return value;
+    }
+    return undefined;
+  }
+
+  function mapType(value) {
+    const normalized = String(value).toLowerCase();
+    if (normalized === 'normal' || normalized === 'image' || normalized === 'img') return '图文';
+    if (normalized === 'video') return '视频';
+    return String(value);
+  }
+
+  function buildLink(id, token) {
+    const base = 'https://www.xiaohongshu.com/explore/' + id;
+    if (token == null || token === '') return base;
+    return base + '?xsec_token=' + encodeURIComponent(String(token)) + '&xsec_source=pc_search';
+  }
+
+  function buildProfile(authorId, explicitUrl, token) {
+    if (explicitUrl) {
+      try {
+        const url = new URL(String(explicitUrl), 'https://www.xiaohongshu.com');
+        if (/^\/user\/profile\/[^/]+/.test(url.pathname)) return url.href;
+      } catch (error) {}
+    }
+    if (authorId == null || authorId === '') return '';
+    const base = 'https://www.xiaohongshu.com/user/profile/' + encodeURIComponent(String(authorId));
+    if (token == null || token === '') return base;
+    return base + '?xsec_token=' + encodeURIComponent(String(token)) + '&xsec_source=pc_feed';
+  }
+
+  function parseVisibleCards(document) {
+    if (!document || typeof document.querySelectorAll !== 'function') return [];
+    const found = new Map();
+    const anchors = document.querySelectorAll('a[href]');
+    for (const anchor of anchors) {
+      const url = absoluteUrl(anchor.getAttribute('href') || '');
+      if (!url) continue;
+      const id = noteIdFromUrl(url);
+      if (!id) continue;
+      let entry = found.get(id);
+      if (!entry) {
+        const token = url.searchParams.get('xsec_token');
+        const link = url.hostname === 'www.xiaohongshu.com'
+          ? url.href
+          : buildLink(id, token);
+        entry = { id, title: '', link, root: cardRoot(anchor) };
+        found.set(id, entry);
+      }
+      const text = elementText(anchor);
+      if (text.length > entry.title.length) entry.title = text;
+      if (!entry.title) {
+        const image = anchor.querySelector('img');
+        const alt = image && (image.getAttribute('alt') || '').trim();
+        if (alt) entry.title = alt;
+      }
+    }
+
+    const numbered = document.querySelectorAll('[data-note-id]');
+    for (const node of numbered) {
+      const id = String(node.getAttribute('data-note-id') || '').trim();
+      if (!id || !/^[0-9a-zA-Z]+$/.test(id) || found.has(id)) continue;
+      const titleNode = node.querySelector('.title, a.title');
+      const image = node.querySelector('img');
+      const alt = image && (image.getAttribute('alt') || '').trim();
+      found.set(id, {
+        id,
+        title: elementText(titleNode || node) || alt || '',
+        link: buildLink(id, ''),
+        root: node,
+      });
+    }
+
+    const notes = [];
+    for (const entry of found.values()) {
+      const author = authorFrom(entry.root);
+      const cover = coverFrom(entry.root, entry.id);
+      const likes = likesFrom(entry.root);
+      const note = {
+        id: entry.id,
+        title: entry.title,
+        author: author.author,
+        profile: author.profile || buildProfile(author.authorId, ''),
+        link: entry.link,
+        present: {
+          作者ID: Boolean(author.authorId),
+          点赞数: likes.present,
+          笔记类型: false,
+          封面图: Boolean(cover),
+        },
+      };
+      if (author.authorId) note.authorId = author.authorId;
+      if (likes.present) note.likes = likes.value;
+      if (cover) note.cover = cover;
+      notes.push(note);
+    }
+    return notes;
+  }
+
+  function absoluteUrl(href) {
+    try {
+      return new URL(href, 'https://www.xiaohongshu.com');
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function noteIdFromUrl(url) {
+    const match = url.pathname.match(/^\/(?:explore|search_result|discovery\/item)\/([0-9a-zA-Z]+)/);
+    return match ? match[1] : '';
+  }
+
+  function elementText(element) {
+    const raw = element.innerText || element.textContent || '';
+    return String(raw).replace(/\s+/g, ' ').trim();
+  }
+
+  function cardRoot(anchor) {
+    let node = anchor;
+    for (let depth = 0; depth < 6 && node.parentElement; depth += 1) {
+      node = node.parentElement;
+      if (node.querySelector('a[href*="/user/profile/"]')) return node;
+      const tag = node.tagName;
+      if (tag === 'SECTION' || tag === 'ARTICLE') return node;
+    }
+    return node;
+  }
+
+  function authorFrom(root) {
+    const links = root.querySelectorAll('a[href]');
+    for (const link of links) {
+      const url = absoluteUrl(link.getAttribute('href') || '');
+      if (!url) continue;
+      const match = url.pathname.match(/^\/user\/profile\/([0-9a-zA-Z]+)/);
+      if (!match) continue;
+      return { author: elementText(link), authorId: match[1], profile: url.href };
+    }
+    return { author: '', authorId: '', profile: '' };
+  }
+
+  function likesFrom(root) {
+    if (!root || !root.querySelector) return { present: false, value: undefined };
+    const node = root.querySelector('.like-wrapper .count');
+    if (!node) return { present: false, value: undefined };
+    const text = elementText(node);
+    if (!text) return { present: false, value: undefined };
+    return { present: true, value: text };
+  }
+
+  function coverFrom(root, noteId) {
+    const links = root.querySelectorAll('a[href]');
+    for (const link of links) {
+      const url = absoluteUrl(link.getAttribute('href') || '');
+      if (!url || noteIdFromUrl(url) !== noteId) continue;
+      const image = link.querySelector('img');
+      const src = image && image.getAttribute('src');
+      if (src) return src;
+    }
+    const images = root.querySelectorAll('img');
+    for (const image of images) {
+      if (image.closest('a[href*="/user/profile/"]')) continue;
+      const src = image.getAttribute('src');
+      if (src) return src;
+    }
+    return '';
+  }
+
+  function toTable(notes) {
+    const headers = ['笔记ID', '标题', '作者'];
+    if (notes.some((note) => note.present && note.present['作者ID'])) headers.push('作者ID');
+    headers.push('作者主页');
+    for (const header of OPTIONAL_COLUMNS) {
+      if (header === '作者ID') continue;
+      if (notes.some((note) => note.present && note.present[header])) headers.push(header);
+    }
+    headers.push('笔记链接');
+    return {
+      headers,
+      rows: notes.map((note) => headers.map((header) => cellValue(note, header))),
+    };
+  }
+
+  function cellValue(note, header) {
+    switch (header) {
+      case '笔记ID': return note.id;
+      case '标题': return note.title || '';
+      case '作者': return note.author || '';
+      case '作者ID': return note.authorId || '';
+      case '作者主页': return note.profile || '';
+      case '点赞数': return note.likes == null ? '' : note.likes;
+      case '笔记类型': return note.type || '';
+      case '封面图': return note.cover || '';
+      case '笔记链接': return note.link || '';
+      default: return '';
+    }
+  }
+
+  function workbookBytes(notes, XLSXImpl, options) {
+    const XLSX = XLSXImpl || (typeof globalThis !== 'undefined' ? globalThis.XLSX : null);
+    if (!XLSX || !XLSX.utils) {
+      throw new Error('缺少本地 xlsx 库');
+    }
+    const table = toTable(notes);
+    const sheet = XLSX.utils.aoa_to_sheet([table.headers].concat(table.rows));
+    forceTextColumns(XLSX, sheet, table.headers);
+    const book = XLSX.utils.book_new();
+    const mode = options && options.mode;
+    XLSX.utils.book_append_sheet(book, sheet, mode === 'recommend' ? '推荐' : '搜索结果');
+    return XLSX.write(book, { bookType: 'xlsx', type: 'array' });
+  }
+
+  function forceTextColumns(XLSX, sheet, headers) {
+    if (!sheet['!ref']) return;
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+    for (let column = range.s.c; column <= range.e.c; column += 1) {
+      if (!TEXT_COLUMNS.has(headers[column])) continue;
+      for (let row = range.s.r + 1; row <= range.e.r; row += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: column });
+        const cell = sheet[address];
+        if (!cell || cell.v == null) continue;
+        cell.t = 's';
+        cell.v = String(cell.v);
+        delete cell.w;
+      }
+    }
+  }
+
+  function formatExportFilename(keyword, date, mode) {
+    const when = date instanceof Date ? date : new Date(date);
+    const stamp = [
+      String(when.getFullYear()),
+      pad(when.getMonth() + 1),
+      pad(when.getDate()),
+    ].join('') + '-' + pad(when.getHours()) + pad(when.getMinutes());
+    if (mode === 'recommend') return '小红书推荐_' + stamp + '.xlsx';
+    return '小红书搜索_' + safeKeyword(keyword) + '_' + stamp + '.xlsx';
+  }
+
+  function pad(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  function safeKeyword(keyword) {
+    const cleaned = String(keyword || '')
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return cleaned || '未命名';
+  }
+
+  const SEARCH_HOSTS = {
+    'www.xiaohongshu.com': true,
+    'xiaohongshu.com': true,
+  };
+
+  function describePage(url) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (error) {
+      return { allowed: false, keyword: '', message: NOT_SEARCH_MESSAGE };
+    }
+    const path = parsed.pathname || '';
+    const protocolOk = parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    const mode = protocolOk && SEARCH_HOSTS[parsed.hostname] ? pageMode(path) : '';
+    if (!mode) {
+      return { allowed: false, mode: '', label: '', keyword: '', message: NOT_SEARCH_MESSAGE };
+    }
+    return {
+      allowed: true,
+      mode: mode,
+      label: mode === 'recommend' ? '推荐' : '搜索',
+      keyword: mode === 'search' ? (parsed.searchParams.get('keyword') || '') : '',
+      message: '',
+    };
+  }
+
+  function isPath(path, base) {
+    return path === base || path.startsWith(base + '/');
+  }
+
+  function pageMode(path) {
+    if (isPath(path, '/search_result') || isPath(path, '/search_result_ai')) return 'search';
+    if (path === '/' || path === '/explore' || path === '/explore/') return 'recommend';
+    return '';
+  }
+
+  function blankPageState() {
+    return { hasMore: null, cursor: '', cursorRaw: '', searchId: '' };
+  }
+
+  function cursorFromText(text) {
+    const specific = /"(cursor_score|cursorScore|next_cursor|nextCursor)"\s*:\s*("(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(text);
+    const itemsAt = text.indexOf('"items"');
+    const head = itemsAt === -1 ? text : text.slice(0, itemsAt);
+    const generic = /"(cursor)"\s*:\s*("(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(head);
+    const match = specific || generic;
+    if (!match) return null;
+    const raw = match[2];
+    if (raw.charAt(0) === '"') {
+      try {
+        return { value: JSON.parse(raw), raw: raw };
+      } catch (error) {
+        return { value: raw.slice(1, -1), raw: raw };
+      }
+    }
+    return { value: raw, raw: raw };
+  }
+
+  function jsonField(body, key) {
+    const match = new RegExp('"' + key + '"\\s*:\\s*("(?:\\\\.|[^"\\\\])*"|-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)').exec(body);
+    if (!match) return null;
+    return match[1];
+  }
+
+  function comparable(raw) {
+    if (!raw) return '';
+    if (raw.charAt(0) === '"') {
+      try {
+        return JSON.parse(raw);
+      } catch (error) {
+        return raw.slice(1, -1);
+      }
+    }
+    return raw;
+  }
+
+  function replaceField(body, key, rawLiteral) {
+    const pattern = new RegExp('("' + key + '"\\s*:\\s*)("(?:\\\\.|[^"\\\\])*"|-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)');
+    if (!pattern.test(body)) return body;
+    return body.replace(pattern, '$1' + rawLiteral);
+  }
+
+  function firstText(root, keys) {
+    for (let index = 0; index < keys.length; index += 1) {
+      const value = root[keys[index]];
+      if (value == null || value === '') continue;
+      if (typeof value === 'string' || typeof value === 'number') return String(value);
+    }
+    return '';
+  }
+
+  function readPageState(payload) {
+    let data = payload;
+    if (typeof payload === 'string') {
+      const text = payload.trim();
+      if (!text) return blankPageState();
+      try {
+        data = JSON.parse(text);
+      } catch (error) {
+        return blankPageState();
+      }
+    }
+    if (!data || typeof data !== 'object') return blankPageState();
+    const roots = [data];
+    if (data.data && typeof data.data === 'object') roots.push(data.data);
+    let hasMore = null;
+    let cursor = '';
+    let cursorRaw = '';
+    let searchId = '';
+    if (typeof payload === 'string') {
+      const found = cursorFromText(payload);
+      if (found && found.value !== '') {
+        cursor = String(found.value);
+        cursorRaw = found.raw;
+      }
+    }
+    roots.forEach(function (root) {
+      if (hasMore === null) {
+        if (typeof root.has_more === 'boolean') hasMore = root.has_more;
+        else if (typeof root.hasMore === 'boolean') hasMore = root.hasMore;
+      }
+      if (!cursor) {
+        cursor = firstText(root, ['cursor_score', 'cursorScore', 'cursor', 'next_cursor', 'nextCursor']);
+        if (cursor) cursorRaw = JSON.stringify(cursor);
+      }
+      if (!searchId) searchId = firstText(root, ['search_id', 'searchId']);
+    });
+    return { hasMore: hasMore, cursor: cursor, cursorRaw: cursorRaw, searchId: searchId };
+  }
+
+  function bumpPage(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value + 1;
+    if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value) + 1;
+    return null;
+  }
+
+  function buildNextPageRequest(last, state, capturedCount) {
+    if (!last || !last.url || typeof last.body !== 'string' || !last.body) return null;
+    let body = last.body;
+    const cursorKeys = ['cursor_score', 'cursorScore', 'cursor', 'next_cursor', 'nextCursor'];
+    const presentCursor = cursorKeys.filter(function (key) { return jsonField(body, key) != null; });
+    let changed = false;
+    let cursorStuck = false;
+    if (presentCursor.length) {
+      const current = comparable(jsonField(body, presentCursor[0]));
+      if (!state || !state.cursor || String(current) === String(state.cursor)) {
+        cursorStuck = true;
+      } else {
+        const literal = state.cursorRaw || JSON.stringify(state.cursor);
+        presentCursor.forEach(function (key) {
+          body = replaceField(body, key, literal);
+        });
+        changed = true;
+      }
+    }
+    ['page', 'page_num', 'pageNum'].forEach(function (key) {
+      const raw = jsonField(body, key);
+      if (raw == null || !/^-?\d+$/.test(raw)) return;
+      body = replaceField(body, key, String(Number(raw) + 1));
+      changed = true;
+      cursorStuck = false;
+    });
+    if (!changed) return cursorStuck ? { blocked: '游标没有继续往后' } : null;
+    ['note_index', 'noteIndex'].forEach(function (key) {
+      if (jsonField(body, key) != null) body = replaceField(body, key, String(capturedCount));
+    });
+    ['refresh_type', 'refreshType'].forEach(function (key) {
+      if (jsonField(body, key) != null) body = replaceField(body, key, '3');
+    });
+    if (state && state.searchId) {
+      ['search_id', 'searchId'].forEach(function (key) {
+        if (jsonField(body, key) != null) body = replaceField(body, key, JSON.stringify(state.searchId));
+      });
+    }
+    if (body === last.body) return cursorStuck ? { blocked: '游标没有继续往后' } : null;
+    return { url: last.url, method: last.method || 'POST', body: body };
+  }
+
+  function parseExportTarget(raw) {
+    const text = raw == null ? '' : String(raw).trim();
+    if (!text || !/^\d+$/.test(text)) {
+      return { ok: false, target: 0, capped: false, message: INVALID_TARGET_MESSAGE };
+    }
+    const value = Number(text);
+    if (!value) {
+      return { ok: false, target: 0, capped: false, message: INVALID_TARGET_MESSAGE };
+    }
+    if (value > MAX_TARGET) {
+      return { ok: true, target: MAX_TARGET, capped: true, message: '' };
+    }
+    return { ok: true, target: value, capped: false, message: '' };
+  }
+
+  function progressText(target, actual) {
+    return '目标 ' + target + ' 条，已拿到 ' + actual + ' 条';
+  }
+
+  function outcomeMessage(parts) {
+    return parts.filter(Boolean).join('。') + '。';
+  }
+
+  function collectUntil(session, page, options) {
+    const opts = options || {};
+    const parsed = parseExportTarget(opts.target);
+    const store = session.storeFor(page);
+    if (!parsed.ok) {
+      return Promise.resolve({
+        download: false,
+        asked: 0,
+        target: 0,
+        actual: store.list().length,
+        capped: false,
+        message: parsed.message,
+        notes: [],
+      });
+    }
+    const gap = opts.minGapMs == null ? MIN_GAP_MS : opts.minGapMs;
+    function stamp() {
+      return opts.now ? opts.now() : Date.now();
+    }
+    function sleep(ms) {
+      return opts.sleep ? opts.sleep(ms) : new Promise(function (resolve) { setTimeout(resolve, ms); });
+    }
+    function notify() {
+      if (opts.onProgress) opts.onProgress(progressText(parsed.target, store.list().length));
+    }
+    function finish(asked, reason, allowDownload) {
+      const actual = store.list().length;
+      if (reason === PAGE_LEFT_MESSAGE) {
+        return {
+          download: false,
+          asked: asked,
+          target: parsed.target,
+          actual: actual,
+          capped: parsed.capped,
+          message: outcomeMessage([PAGE_LEFT_MESSAGE, '目标 ' + parsed.target + ' 条，实际 ' + actual + ' 条']),
+          notes: [],
+        };
+      }
+      const parts = [];
+      if (parsed.capped) parts.push('单次最多 ' + MAX_TARGET + ' 条');
+      parts.push('目标 ' + parsed.target + ' 条，实际 ' + actual + ' 条');
+      if (reason && actual < parsed.target) parts.push(reason);
+      const download = Boolean(allowDownload && actual > 0);
+      return {
+        download: download,
+        asked: asked,
+        target: parsed.target,
+        actual: actual,
+        capped: parsed.capped,
+        short: actual < parsed.target,
+        message: outcomeMessage(parts),
+        notes: download ? store.list() : [],
+      };
+    }
+    async function run() {
+      let emptyRounds = 0;
+      let timedOutRounds = 0;
+      let cursorStuckRounds = 0;
+      let asked = 0;
+      let lastTick = null;
+      notify();
+      while (store.list().length < parsed.target) {
+        if (opts.pageNow && opts.pageNow().mode !== page.mode) {
+          return finish(asked, PAGE_LEFT_MESSAGE, false);
+        }
+        const state = session.pageState(page);
+        if (state.hasMore === false) return finish(asked, '接口没有更多了', true);
+        if (emptyRounds >= EMPTY_ROUND_LIMIT) return finish(asked, '连续几次没有新笔记', true);
+        const request = session.nextPageRequest(page);
+        const cursorStuck = !request && session.blockReason() === '游标没有继续往后';
+        if (lastTick !== null) {
+          const elapsed = stamp() - lastTick;
+          if (elapsed < gap) await sleep(gap - elapsed);
+        }
+        if (opts.pageNow && opts.pageNow().mode !== page.mode) {
+          return finish(asked, PAGE_LEFT_MESSAGE, false);
+        }
+        const before = store.list().length;
+        asked += 1;
+        lastTick = stamp();
+        let timedOut = false;
+        if (request) {
+          const previous = session.currentRequest(page);
+          session.notePageRequest(page, request);
+          const outcome = opts.send ? await opts.send(request) : null;
+          timedOut = Boolean(outcome && outcome.timedOut);
+          if (timedOut && previous) session.notePageRequest(page, previous);
+        } else if (opts.scroll) {
+          const outcome = await opts.scroll();
+          timedOut = Boolean(outcome && outcome.timedOut);
+        } else {
+          emptyRounds += 1;
+          continue;
+        }
+        if (opts.pageNow && opts.pageNow().mode !== page.mode) {
+          return finish(asked, PAGE_LEFT_MESSAGE, false);
+        }
+        if (timedOut && store.list().length <= before) {
+          timedOutRounds += 1;
+        } else if (store.list().length <= before) {
+          emptyRounds += 1;
+          if (cursorStuck) cursorStuckRounds += 1;
+        } else {
+          emptyRounds = 0;
+          timedOutRounds = 0;
+          cursorStuckRounds = 0;
+        }
+        notify();
+        if (timedOutRounds >= 4) return finish(asked, '没有等到下一页响应', true);
+        if (cursorStuckRounds >= EMPTY_ROUND_LIMIT) return finish(asked, '游标没有继续往后', true);
+      }
+      return finish(asked, '', true);
+    }
+    return run();
+  }
+
+  function createSession() {
+    const search = createStore();
+    const recommend = createStore();
+    const requests = { search: null, recommend: null };
+    const states = { search: blankPageState(), recommend: blankPageState() };
+    let held = null;
+    let blocked = '';
+    function modeOf(page) {
+      return page && page.mode === 'recommend' ? 'recommend' : 'search';
+    }
+    return {
+      storeFor(page) {
+        return page && page.mode === 'recommend' ? recommend : search;
+      },
+      pageState(page) {
+        const current = states[modeOf(page)];
+        return {
+          hasMore: current.hasMore,
+          cursor: current.cursor,
+          cursorRaw: current.cursorRaw,
+          searchId: current.searchId,
+        };
+      },
+      blockReason() {
+        return blocked;
+      },
+      currentRequest(page) {
+        if (!page || !requests[page.mode]) return null;
+        const current = requests[page.mode];
+        return { url: current.url, method: current.method, body: current.body };
+      },
+      notePageRequest(page, request) {
+        if (!page || (page.mode !== 'search' && page.mode !== 'recommend') || !request) return;
+        requests[page.mode] = {
+          url: request.url,
+          method: request.method || 'POST',
+          body: request.body == null ? '' : String(request.body),
+        };
+      },
+      nextPageRequest(page) {
+        blocked = '';
+        if (!page || (page.mode !== 'search' && page.mode !== 'recommend')) return null;
+        if (states[page.mode].hasMore === false) return null;
+        const built = buildNextPageRequest(requests[page.mode], states[page.mode], this.storeFor(page).list().length);
+        if (built && built.url) return built;
+        blocked = built && built.blocked ? built.blocked : '';
+        return null;
+      },
+      ingest(page, payload, kind) {
+        if (!page || !page.allowed || page.mode !== kind) {
+          return { recognized: false, added: 0 };
+        }
+        const result = this.storeFor(page).ingestPayload(payload);
+        if (result.recognized) {
+          const read = readPageState(payload);
+          const current = states[page.mode];
+          if (read.hasMore !== null) current.hasMore = read.hasMore;
+          if (read.cursor) {
+            current.cursor = read.cursor;
+            current.cursorRaw = read.cursorRaw || JSON.stringify(read.cursor);
+          }
+          if (read.searchId) current.searchId = read.searchId;
+        }
+        return result;
+      },
+      holdVisible(notes) {
+        held = new Set((notes || []).map(function (note) { return note.id; }));
+      },
+      useVisibleCards(page, document) {
+        const store = this.storeFor(page);
+        if (!page || !page.allowed || store.apiRecognized) return { used: false, added: 0 };
+        const visible = parseVisibleCards(document);
+        if (held && visible.length && visible.every(function (note) { return held.has(note.id); })) {
+          return { used: false, added: 0 };
+        }
+        held = null;
+        const before = store.list().length;
+        store.useVisibleCards(document);
+        return { used: true, added: store.list().length - before };
+      },
+    };
+  }
+
+  function matchesContentScript(pattern, urlString) {
+    const parsedPattern = /^(\*|https|http):\/\/([^/]+)(\/.*)$/.exec(pattern);
+    if (!parsedPattern) return false;
+    let url;
+    try {
+      url = new URL(urlString);
+    } catch (error) {
+      return false;
+    }
+    const scheme = url.protocol.replace(':', '');
+    if (parsedPattern[1] !== '*' && parsedPattern[1] !== scheme) return false;
+    if (!hostMatches(parsedPattern[2], url.hostname)) return false;
+    return globMatch(parsedPattern[3], url.pathname + url.search);
+  }
+
+  function hostMatches(pattern, hostname) {
+    if (pattern === '*') return true;
+    if (pattern.indexOf('*.') === 0) {
+      const rest = pattern.slice(2);
+      return hostname === rest || hostname.slice(-(rest.length + 1)) === '.' + rest;
+    }
+    return pattern === hostname;
+  }
+
+  function globMatch(pattern, text) {
+    let expression = '^';
+    for (let index = 0; index < pattern.length; index += 1) {
+      const character = pattern[index];
+      if (character === '*') expression += '.*';
+      else if (/[\\^$.*+?()[\]{}|]/.test(character)) expression += '\\' + character;
+      else expression += character;
+    }
+    return new RegExp(expression + '$').test(text);
+  }
+
+  function manifestInjects(manifest, urlString) {
+    const scripts = (manifest && manifest.content_scripts) || [];
+    function entryFor(file) {
+      for (let index = 0; index < scripts.length; index += 1) {
+        const files = scripts[index].js || [];
+        if (files.indexOf(file) !== -1) return scripts[index];
+      }
+      return null;
+    }
+    const main = entryFor('src/inject-main.js');
+    const ui = entryFor('src/content.js');
+    if (!main || !ui) return false;
+    if (main.world !== 'MAIN') return false;
+    if (main.run_at !== 'document_start' || ui.run_at !== 'document_start') return false;
+    const permissions = (manifest && manifest.host_permissions) || [];
+    if (!permissions.some((pattern) => matchesContentScript(pattern, urlString))) return false;
+    return [main, ui].every((entry) => (entry.matches || []).some((pattern) => matchesContentScript(pattern, urlString)));
+  }
+
+  function mountPanelHost(document, host) {
+    const node = host || document.createElement('div');
+    node.id = 'xhs-search-export-root';
+    node.setAttribute('data-xhs-search-export', '1');
+    function place() {
+      node.style.setProperty('position', 'fixed', 'important');
+      node.style.setProperty('right', '24px', 'important');
+      node.style.setProperty('bottom', '24px', 'important');
+      node.style.setProperty('top', 'auto', 'important');
+      node.style.setProperty('left', 'auto', 'important');
+      node.style.setProperty('z-index', '2147483647', 'important');
+      node.style.setProperty('width', '260px', 'important');
+      node.style.setProperty('height', 'auto', 'important');
+      node.style.setProperty('margin', '0', 'important');
+      node.style.setProperty('inset', 'auto 24px 24px auto', 'important');
+      node.style.setProperty('display', 'block', 'important');
+      node.style.setProperty('visibility', 'visible', 'important');
+      node.style.setProperty('opacity', '1', 'important');
+      node.style.setProperty('background', 'transparent', 'important');
+      node.style.setProperty('border', '0', 'important');
+      node.style.setProperty('padding', '0', 'important');
+      node.style.setProperty('overflow', 'visible', 'important');
+    }
+    place();
+    const root = document.documentElement;
+    if (root && node.parentNode !== root) root.appendChild(node);
+    try {
+      if (typeof node.showPopover === 'function') {
+        node.popover = 'manual';
+        if (typeof node.matches !== 'function' || !node.matches(':popover-open')) {
+          node.showPopover();
+        }
+        place();
+      }
+    } catch (error) {}
+    return node;
+  }
+
+  function decideExport(options) {
+    const notes = (options && options.notes) || [];
+    const page = describePage(options && options.url);
+    if (!page.allowed) {
+      return { download: false, filename: '', message: page.message };
+    }
+    if (!notes.length) {
+      return { download: false, filename: '', message: emptyMessage(page.mode) };
+    }
+    const keyword = options && options.keyword ? options.keyword : page.keyword;
+    return {
+      download: true,
+      filename: formatExportFilename(keyword, options.now || new Date(), page.mode),
+      message: '',
+    };
+  }
+
+  function emptyMessage(mode) {
+    return mode === 'recommend' ? RECOMMEND_EMPTY_MESSAGE : EMPTY_EXPORT_MESSAGE;
+  }
+
+  function panelView(count, page, options) {
+    const mode = page && page.mode === 'recommend' ? 'recommend' : 'search';
+    const label = mode === 'recommend' ? '推荐' : '搜索';
+    return {
+      mode: mode,
+      modeLabel: label,
+      title: mode === 'recommend' ? '导出推荐' : '导出搜索',
+      countText: '已捕获 ' + count + ' 条笔记',
+      targetLabel: '目标条数',
+      targetValue: options && Object.prototype.hasOwnProperty.call(options, 'targetValue')
+        ? String(options.targetValue)
+        : String(DEFAULT_TARGET),
+      buttonText: '导出 Excel',
+      hint: count === 0
+        ? emptyMessage(mode)
+        : (mode === 'recommend'
+          ? '当前只导出推荐列表，不会带上搜索结果。'
+          : '当前只导出这次搜索，不会带上推荐页。'),
+    };
+  }
+
+  function renderPanel(container, view) {
+    const doc = container.ownerDocument;
+    container.textContent = '';
+    const mode = doc.createElement('p');
+    mode.className = 'mode' + (view.mode === 'recommend' ? ' recommend' : '');
+    mode.setAttribute('data-role', 'mode');
+    mode.textContent = view.modeLabel || '搜索';
+    const count = doc.createElement('p');
+    count.setAttribute('data-role', 'count');
+    count.textContent = view.countText;
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.setAttribute('data-role', 'export');
+    button.textContent = view.buttonText;
+    const targetLabel = doc.createElement('label');
+    targetLabel.setAttribute('data-role', 'target-label');
+    targetLabel.textContent = view.targetLabel || '目标条数';
+    const target = doc.createElement('input');
+    target.setAttribute('data-role', 'target');
+    target.type = 'number';
+    target.min = '1';
+    target.max = String(MAX_TARGET);
+    target.value = view.targetValue != null ? view.targetValue : String(DEFAULT_TARGET);
+    targetLabel.appendChild(target);
+    const hint = doc.createElement('p');
+    hint.setAttribute('data-role', 'hint');
+    hint.textContent = view.hint || '';
+    container.append(mode, count, targetLabel, button, hint);
+    return { mode, count, button, hint, target, targetLabel };
+  }
+
+  return {
+    EMPTY_EXPORT_MESSAGE,
+    RECOMMEND_EMPTY_MESSAGE,
+    NOT_SEARCH_MESSAGE,
+    createStore,
+    createSession,
+    parseSearchResponse,
+    parseVisibleCards,
+    toTable,
+    workbookBytes,
+    formatExportFilename,
+    describePage,
+    decideExport,
+    parseExportTarget,
+    buildNextPageRequest,
+    collectUntil,
+    panelView,
+    renderPanel,
+    matchesContentScript,
+    manifestInjects,
+    mountPanelHost,
+  };
+});

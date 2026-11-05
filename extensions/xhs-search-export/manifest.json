@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "小红书搜索导出",
+  "version": "1.2.2",
+  "description": "按填写的条数，把当前小红书推荐或搜索结果导出为 Excel",
+  "permissions": ["scripting"],
+  "host_permissions": [
+    "https://www.xiaohongshu.com/*",
+    "https://xiaohongshu.com/*",
+    "http://www.xiaohongshu.com/*",
+    "http://xiaohongshu.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_title": "导出小红书笔记",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.xiaohongshu.com/*",
+        "https://xiaohongshu.com/*",
+        "http://www.xiaohongshu.com/*",
+        "http://xiaohongshu.com/*"
+      ],
+      "js": ["src/inject-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.xiaohongshu.com/*",
+        "https://xiaohongshu.com/*",
+        "http://www.xiaohongshu.com/*",
+        "http://xiaohongshu.com/*"
+      ],
+      "js": ["src/model.js", "src/content.js", "vendor/xlsx.full.min.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

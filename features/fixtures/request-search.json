@@ -1,0 +1,5 @@
+{
+  "url": "https://edith.xiaohongshu.com/api/sns/web/v2/search/notes",
+  "method": "POST",
+  "body": "{\"keyword\":\"大平层\",\"page\":1,\"page_size\":20,\"search_id\":\"sid-from-page\"}"
+}

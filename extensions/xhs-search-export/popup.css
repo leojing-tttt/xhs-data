@@ -1,0 +1,33 @@
+body {
+  width: 280px;
+  margin: 0;
+  padding: 14px;
+  color: #222;
+  font: 14px/1.5 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+p {
+  margin: 0 0 8px;
+}
+
+#hint {
+  color: #666;
+  font-size: 12px;
+}
+
+button {
+  width: 100%;
+  margin-top: 4px;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #ff2442;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

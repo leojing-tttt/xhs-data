@@ -1,0 +1,24 @@
+{
+  "code": 0,
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "model_type": "note",
+        "note": {
+          "note_id": "legacyid00000000000001",
+          "title": "旧字段标题",
+          "type": "video",
+          "liked_count": 9,
+          "user": {
+            "nickname": "旧作者",
+            "userid": "legacy-user"
+          },
+          "cover": {
+            "url": "https://cdn.example.com/legacy.jpg"
+          }
+        }
+      }
+    ]
+  }
+}

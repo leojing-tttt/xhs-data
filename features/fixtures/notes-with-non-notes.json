@@ -1,0 +1,27 @@
+{
+  "code": 0,
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": "query-1",
+        "model_type": "rec_query"
+      },
+      {
+        "id": "query-2",
+        "model_type": "hot_query"
+      },
+      {
+        "id": "onlynote000000000000001",
+        "model_type": "note",
+        "note_card": {
+          "display_title": "只保留笔记",
+          "user": {
+            "nickname": "作者乙",
+            "user_id": "user_2"
+          }
+        }
+      }
+    ]
+  }
+}
