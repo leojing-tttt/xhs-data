@@ -2,7 +2,7 @@
 
 在小红书 PC 的推荐首页或搜索结果页，把**当前已经加载出来的笔记**导出成 Excel。面板上的「推荐」或「搜索」表示现在导出的是哪一种列表，两种列表不会混在同一个文件里。
 
-搜索示例：`https://www.xiaohongshu.com/search_result?keyword=大平层装修&source=web_user_page`
+搜索示例：`https://www.xiaohongshu.com/search_result?keyword=大平层装修&source=web_user_page`。从首页搜索框进去时，登录且打开了 AI 搜索的账号会进 `/search_result_ai`，这个地址同样显示「搜索 / 导出搜索」。带查询参数、带尾斜杠都算搜索结果页。
 
 推荐示例：`https://www.xiaohongshu.com/explore`
 

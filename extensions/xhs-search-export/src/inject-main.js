@@ -10,6 +10,7 @@
     if (host !== 'www.xiaohongshu.com' && host !== 'xiaohongshu.com') return '';
     const path = location.pathname || '/';
     if (path === '/search_result' || path.indexOf('/search_result/') === 0) return 'search';
+    if (path === '/search_result_ai' || path.indexOf('/search_result_ai/') === 0) return 'search';
     if (path === '/' || path === '/explore' || path === '/explore/') return 'recommend';
     return '';
   }

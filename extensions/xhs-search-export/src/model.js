@@ -536,8 +536,12 @@
     };
   }
 
+  function isPath(path, base) {
+    return path === base || path.startsWith(base + '/');
+  }
+
   function pageMode(path) {
-    if (path === '/search_result' || path.startsWith('/search_result/')) return 'search';
+    if (isPath(path, '/search_result') || isPath(path, '/search_result_ai')) return 'search';
     if (path === '/' || path === '/explore' || path === '/explore/') return 'recommend';
     return '';
   }

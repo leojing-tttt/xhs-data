@@ -203,6 +203,7 @@ When('渲染页内面板', function () {
   const dom = new JSDOM('<!DOCTYPE html><div id="host"></div>');
   const host = dom.window.document.getElementById('host');
   this.panel = model.renderPanel(host, view);
+  this.panelTitle = view.title;
   this.notice = view.hint || this.notice;
 });
 
@@ -338,9 +339,9 @@ Then('提示包含{string}', function (text) {
 });
 
 Then('面板文案包含{string}', function (text) {
-  const parts = [this.panel.mode, this.panel.count, this.panel.targetLabel, this.panel.hint]
+  const parts = [this.panelTitle, this.panel.mode, this.panel.count, this.panel.targetLabel, this.panel.hint]
     .filter(Boolean)
-    .map((node) => node.textContent)
+    .map((node) => (typeof node === 'string' ? node : node.textContent))
     .join('\n');
   assert.ok(parts.includes(text), parts);
 });
