@@ -1,0 +1,9 @@
+* daemon not running. starting it now on port 5037 *
+* daemon started successfully *
+List of devices attached
+R5CT1234567            device usb:1-1.2 product:dm3q model:SM_S9110 device:dm3q transport_id:2
+192.168.1.20:5555      device product:raven model:Pixel_6_Pro device:raven transport_id:5
+emulator-5554          offline transport_id:1
+ABCDEF012345           unauthorized
+ZXCVBN             no permissions
+
