@@ -12,6 +12,11 @@ const state = {
   session: null,
   scrcpy: '',
   poll: 0,
+  taskTypes: [],
+  tasks: [],
+  taskDevices: [],
+  openTaskId: '',
+  taskError: '',
 };
 
 const ICONS = {
@@ -182,10 +187,22 @@ function renderLogin(message = '') {
   });
 }
 
-function shell(title, extra) {
+function shell({ title, extra, active, onRefresh }) {
+  const tab = (id, label, show) => el('button', {
+    class: active === id ? 'text-btn on' : 'text-btn',
+    type: 'button',
+    text: label,
+    onclick: show,
+  });
   return el('div', { class: 'shell' }, [
     el('header', { class: 'topbar' }, [
-      el('p', { class: 'brand-mark', text: '手机控制台' }),
+      el('div', { class: 'brand-row' }, [
+        el('p', { class: 'brand-mark', text: '手机控制台' }),
+        el('nav', { class: 'nav' }, [
+          tab('devices', '设备', () => showDevices()),
+          tab('tasks', '任务', () => showTasks()),
+        ]),
+      ]),
       el('div', { class: 'who' }, [
         el('span', { text: state.me?.displayName || state.me?.username || '' }),
         el('button', {
@@ -210,7 +227,7 @@ function shell(title, extra) {
         el('button', {
           class: 'ghost',
           type: 'button',
-          onclick: () => refreshDevices(),
+          onclick: () => onRefresh(),
         }, [icon('refresh'), el('span', { text: '刷新' })]),
       ]),
       el('div', { id: 'list-slot' }),
@@ -303,7 +320,12 @@ async function showDevices() {
       state.scrcpy = '';
     }
   }
-  app.replaceChildren(shell('插在这台机器上的手机', el('p', { text: '序列号、型号、状态。在线的才能打开。' })));
+  app.replaceChildren(shell({
+    title: '插在这台机器上的手机',
+    extra: el('p', { text: '序列号、型号、状态。在线的才能打开。' }),
+    active: 'devices',
+    onRefresh: () => refreshDevices(),
+  }));
   await refreshDevices();
   stopPoll();
   state.poll = setInterval(refreshDevices, 4000);
@@ -594,6 +616,229 @@ function renderConsole() {
   ws.onclose = () => {
     if (state.view === 'console') status('连接已断开。可以返回列表再打开。');
   };
+}
+
+function taskStatusClass(status) {
+  if (status === 'failed') return 'status-failed';
+  if (status === 'queued') return 'status-queued';
+  return 'status-ok';
+}
+
+function renderTaskForm() {
+  const type = el('select', { id: 'task-type', name: 'type' });
+  for (const item of state.taskTypes) {
+    type.append(el('option', { value: item.id, text: item.label }));
+  }
+  const keyword = el('input', {
+    id: 'task-keyword',
+    type: 'text',
+    name: 'keyword',
+    maxlength: '40',
+    autocomplete: 'off',
+  });
+  const limit = el('input', {
+    id: 'task-limit',
+    type: 'number',
+    name: 'limit',
+    min: '1',
+    max: '30',
+    value: '10',
+  });
+  const device = el('select', { id: 'task-device', name: 'serial' });
+  const error = el('p', { id: 'task-error', class: 'form-error', role: 'alert', text: state.taskError });
+  const form = el('form', { class: 'task-form' }, [
+    el('label', {}, [el('span', { text: '种类' }), type]),
+    el('label', {}, [el('span', { text: '关键词' }), keyword]),
+    el('label', {}, [el('span', { text: '条数' }), limit]),
+    el('label', {}, [el('span', { text: '手机' }), device]),
+    el('button', { class: 'primary', type: 'submit', text: '提交' }),
+    error,
+  ]);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button');
+    error.textContent = '';
+    button.disabled = true;
+    try {
+      await api('/api/tasks', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: type.value,
+          keyword: keyword.value,
+          limit: Number(limit.value),
+          serial: device.value,
+        }),
+      });
+      keyword.value = '';
+      await refreshTasks();
+    } catch (err) {
+      error.textContent = err.message || '提交失败。';
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return form;
+}
+
+function fillTaskDevices() {
+  const select = document.querySelector('#task-device');
+  if (!select) return;
+  const current = select.value;
+  const busy = new Set(
+    state.tasks.filter((task) => task.status === 'queued' || task.status === 'running').map((task) => task.serial),
+  );
+  const online = state.taskDevices.filter((device) => device.state === 'device');
+  select.replaceChildren();
+  if (!online.length) {
+    select.append(el('option', { value: '', text: '没有在线的手机' }));
+    return;
+  }
+  let selectable = 0;
+  for (const device of online) {
+    const label = device.model ? `${device.model} · ${device.serial}` : device.serial;
+    const option = el('option', {
+      value: device.serial,
+      text: busy.has(device.serial) ? `${label}（有任务）` : label,
+    });
+    if (busy.has(device.serial)) option.disabled = true;
+    else selectable += 1;
+    select.append(option);
+  }
+  if (!selectable) select.prepend(el('option', { value: '', text: '没有空闲的手机' }));
+  const idle = [...select.options].find((option) => option.value && !option.disabled);
+  if (current && [...select.options].some((option) => option.value === current && !option.disabled)) {
+    select.value = current;
+  } else if (idle) {
+    select.value = idle.value;
+  } else {
+    select.value = '';
+  }
+}
+
+function noteCell(text) {
+  return el('td', { text: text || '' });
+}
+
+function renderTaskDetail(task) {
+  const slot = document.querySelector('#task-detail');
+  if (!slot) return;
+  if (!task) {
+    slot.replaceChildren();
+    return;
+  }
+  const table = el('table', { class: 'notes' }, [
+    el('thead', {}, [
+      el('tr', {}, ['笔记 ID', '标题', '作者', '作者主页', '点赞', '笔记链接'].map((label) => el('th', { text: label }))),
+    ]),
+    el('tbody', {}, (task.notes || []).map((note) => el('tr', {}, [
+      noteCell(note.noteId),
+      noteCell(note.title),
+      noteCell(note.author),
+      el('td', {}, note.authorUrl ? [el('a', { href: note.authorUrl, target: '_blank', rel: 'noreferrer', text: note.authorUrl })] : []),
+      noteCell(note.likes),
+      el('td', {}, note.noteUrl ? [el('a', { href: note.noteUrl, target: '_blank', rel: 'noreferrer', text: note.noteUrl })] : []),
+    ]))),
+  ]);
+  const head = [
+    el('p', { class: 'count', text: `拿到 ${task.count} 条` }),
+  ];
+  if (task.error) head.push(el('div', { class: 'banner', role: 'alert', text: task.error }));
+  slot.replaceChildren(el('section', { class: 'task-detail' }, [
+    el('h3', { text: `${task.typeLabel} · ${task.keyword}` }),
+    ...head,
+    table,
+  ]));
+}
+
+function renderTaskList() {
+  const slot = document.querySelector('#task-list');
+  if (!slot) return;
+  fillTaskDevices();
+  if (!state.tasks.length) {
+    slot.replaceChildren(el('p', { class: 'hint', text: '还没有任务。' }));
+    renderTaskDetail(null);
+    return;
+  }
+  const list = el('ul', { class: 'task-list' });
+  for (const task of state.tasks) {
+    const open = task.id === state.openTaskId;
+    list.append(el('li', { class: open ? 'task-row on' : 'task-row' }, [
+      el('span', { text: task.keyword }),
+      el('span', { class: 'serial', text: task.serial }),
+      el('span', { class: taskStatusClass(task.status), text: task.statusLabel }),
+      el('span', { text: `拿到 ${task.count} 条` }),
+      el('button', {
+        class: 'ghost',
+        type: 'button',
+        text: open ? '收起' : '结果',
+        onclick: () => {
+          state.openTaskId = open ? '' : task.id;
+          renderTaskList();
+        },
+      }),
+    ]));
+  }
+  slot.replaceChildren(list);
+  renderTaskDetail(state.tasks.find((task) => task.id === state.openTaskId) || null);
+}
+
+async function refreshTasks() {
+  if (state.view !== 'tasks') return;
+  try {
+    const [listed, devices] = await Promise.all([
+      api('/api/tasks'),
+      api('/api/devices'),
+    ]);
+    state.tasks = listed.tasks || [];
+    state.taskDevices = devices.devices || [];
+    state.taskError = '';
+    const error = document.querySelector('#task-error');
+    if (error && !error.textContent) error.textContent = '';
+    renderTaskList();
+  } catch (err) {
+    if (err.status === 401) return;
+    const error = document.querySelector('#task-error');
+    if (error) error.textContent = err.message || '读任务失败。';
+  }
+}
+
+async function showTasks() {
+  state.view = 'tasks';
+  document.title = '任务 · 手机控制台';
+  stopPoll();
+  if (!state.scrcpy) {
+    try {
+      const meta = await api('/api/meta');
+      state.scrcpy = meta.scrcpy || '';
+    } catch {
+      state.scrcpy = '';
+    }
+  }
+  app.replaceChildren(shell({
+    title: '任务',
+    extra: el('p', { text: '一台手机同时只跑一个。失败会停住，并写明原因。' }),
+    active: 'tasks',
+    onRefresh: () => refreshTasks(),
+  }));
+  const slot = document.querySelector('#list-slot');
+  try {
+    if (!state.taskTypes.length) {
+      const types = await api('/api/task-types');
+      state.taskTypes = types.types || [];
+    }
+    slot.append(
+      renderTaskForm(),
+      el('div', { id: 'task-list' }),
+      el('div', { id: 'task-detail' }),
+    );
+    await refreshTasks();
+    state.poll = setInterval(() => {
+      refreshTasks().catch(() => {});
+    }, 2000);
+  } catch (err) {
+    if (err.status === 401) return;
+    slot.replaceChildren(el('div', { class: 'banner', role: 'alert', text: err.message || '打不开任务。' }));
+  }
 }
 
 window.addEventListener('pagehide', () => {

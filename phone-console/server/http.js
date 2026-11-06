@@ -12,10 +12,13 @@ import {
   readSessionToken,
   sessionCookie,
 } from './auth.js';
-import { adbErrorMessage, listDevices } from './devices.js';
+import { adbErrorMessage, isSafeSerial, listDevices } from './devices.js';
 import { SCRCPY_VERSION } from './scrcpy.js';
 import { createSessionManager, SessionError } from './session.js';
+import { TASK_TYPES } from './task-types.js';
+import { createTaskStore } from './tasks.js';
 import { acceptWebSocket, rejectUpgrade } from './ws.js';
+import { searchXiaohongshu } from './xhs-search.js';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -87,6 +90,15 @@ export function createApp(options = {}) {
   const run = options.runAdb || runAdb;
   const manager = options.sessionManager || createSessionManager({ runAdb: run, root });
   const publicDir = path.resolve(options.publicDir || path.join(root, 'public'));
+  const tasks = options.taskStore || createTaskStore({
+    file: options.taskFile || '',
+    execute: options.taskExecute || ((task) => searchXiaohongshu({
+      runAdb: run,
+      serial: task.serial,
+      keyword: task.keyword,
+      limit: task.limit,
+    })),
+  });
 
   function currentUser(req) {
     const token = readCookie(req.headers.cookie || '', 'pc_session');
@@ -178,6 +190,74 @@ export function createApp(options = {}) {
       return;
     }
 
+    if (url.pathname === '/api/task-types' && req.method === 'GET') {
+      const user = currentUser(req);
+      if (!user) {
+        sendJson(res, 401, { error: 'unauthorized', message: '请先登录。' });
+        return;
+      }
+      sendJson(res, 200, { types: TASK_TYPES });
+      return;
+    }
+
+    if (url.pathname === '/api/tasks' && req.method === 'GET') {
+      const user = currentUser(req);
+      if (!user) {
+        sendJson(res, 401, { error: 'unauthorized', message: '请先登录。' });
+        return;
+      }
+      sendJson(res, 200, { tasks: tasks.list() });
+      return;
+    }
+
+    const taskMatch = url.pathname.match(/^\/api\/tasks\/([a-f0-9]{16})$/);
+    if (taskMatch && req.method === 'GET') {
+      const user = currentUser(req);
+      if (!user) {
+        sendJson(res, 401, { error: 'unauthorized', message: '请先登录。' });
+        return;
+      }
+      const task = tasks.get(taskMatch[1]);
+      if (!task) {
+        sendJson(res, 404, { error: 'not-found', message: '没有这个任务。' });
+        return;
+      }
+      sendJson(res, 200, task);
+      return;
+    }
+
+    if (url.pathname === '/api/tasks' && req.method === 'POST') {
+      const user = currentUser(req);
+      if (!user) {
+        sendJson(res, 401, { error: 'unauthorized', message: '请先登录。' });
+        return;
+      }
+      const body = await readJson(req);
+      const serial = typeof body.serial === 'string' ? body.serial : '';
+      if (!isSafeSerial(serial)) {
+        sendJson(res, 400, { error: 'request', message: '请选择一台手机。' });
+        return;
+      }
+      const listed = await listDevices(run);
+      if (listed.adbError) {
+        sendJson(res, 503, { error: 'adb', message: adbErrorMessage(listed.adbError) });
+        return;
+      }
+      const online = listed.devices.some((device) => device.serial === serial && device.state === 'device');
+      if (!online) {
+        sendJson(res, 404, { error: 'request', message: '这台手机不在线。插上之后再选。' });
+        return;
+      }
+      const task = tasks.submit({
+        type: body.type,
+        serial,
+        keyword: body.keyword,
+        limit: body.limit,
+      });
+      sendJson(res, 200, task);
+      return;
+    }
+
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       sendJson(res, 404, { error: 'not-found', message: '没有这个接口。' });
       return;
@@ -220,6 +300,7 @@ export function createApp(options = {}) {
   });
 
   server.sessionManager = manager;
+  server.taskStore = tasks;
   server.requestTimeout = 30000;
   return server;
 }

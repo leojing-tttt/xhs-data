@@ -344,6 +344,99 @@ input:focus { outline: none; border-bottom-color: var(--signal); }
   line-height: 1.75;
 }
 
+.brand-row {
+  display: flex;
+  align-items: baseline;
+  gap: 1.4rem;
+}
+
+.nav { display: flex; gap: 0.9rem; }
+
+.nav .text-btn.on {
+  color: var(--signal);
+  border-bottom-color: var(--signal);
+}
+
+.task-form {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(10rem, 1.4fr) 6rem minmax(10rem, 1.2fr) auto;
+  gap: 0.8rem 1rem;
+  align-items: end;
+  margin-bottom: 1.4rem;
+}
+
+.task-form .form-error { grid-column: 1 / -1; margin: 0; }
+
+.task-form input,
+.task-form select {
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  background: #10140d;
+  border: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.task-form .primary { margin-top: 0; }
+
+.task-list { margin: 0; padding: 0; list-style: none; }
+
+.task-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1.2fr) minmax(8rem, 1fr) 5rem 7rem auto;
+  gap: 0.8rem;
+  align-items: center;
+  padding: 0.9rem 0.2rem;
+  border-top: 1px solid var(--line);
+}
+
+.task-row:last-child { border-bottom: 1px solid var(--line); }
+
+.task-row.on { background: rgba(214, 255, 60, 0.04); }
+
+.status-ok { color: var(--signal); font-family: var(--mono); font-size: 0.82rem; }
+
+.status-queued { color: var(--warn); font-family: var(--mono); font-size: 0.82rem; }
+
+.status-failed { color: var(--power); font-family: var(--mono); font-size: 0.82rem; }
+
+.task-detail { margin-top: 1.4rem; }
+
+.task-detail h3 {
+  margin: 0 0 0.4rem;
+  font-family: var(--serif);
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.count {
+  margin: 0 0 0.8rem;
+  font-family: var(--mono);
+  color: var(--signal);
+}
+
+.notes {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.notes th,
+.notes td {
+  padding: 0.55rem 0.45rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.notes th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.78rem;
+}
+
+.notes a { color: var(--signal); }
+
 .foot {
   margin-top: 3rem;
   color: var(--muted);
@@ -478,7 +571,7 @@ input:focus { outline: none; border-bottom-color: var(--signal); }
 }
 
 @media (max-width: 860px) {
-  .login, .empty, .console, .device-row {
+  .login, .empty, .console, .device-row, .task-form, .task-row {
     grid-template-columns: 1fr;
   }
 

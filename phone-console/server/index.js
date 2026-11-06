@@ -10,7 +10,12 @@ async function main() {
   const users = loadUsers(path.join(root, 'config', 'users.json'));
   const port = Number(process.env.PORT || 8787);
   const host = process.env.HOST || '0.0.0.0';
-  const server = createApp({ root, users, sessionSecret: secret });
+  const server = createApp({
+    root,
+    users,
+    sessionSecret: secret,
+    taskFile: path.join(root, 'data', 'tasks.json'),
+  });
   server.listen(port, host, () => {
     console.log(`手机控制台 http://127.0.0.1:${port}`);
     if (host === '0.0.0.0' || host === '::') {
