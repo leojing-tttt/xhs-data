@@ -61,13 +61,65 @@ function openSocket(port) {
 }
 
 function connectReader(port) {
-  return openSocket(port).then((socket) => {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host: '127.0.0.1', port });
+    socket.setNoDelay(true);
     const reader = new ByteReader();
+    let settled = false;
+    const fail = (err) => {
+      if (!settled) {
+        settled = true;
+        socket.destroy();
+        reject(err);
+        return;
+      }
+      reader.end(err);
+    };
     socket.on('data', (chunk) => reader.push(chunk));
-    socket.on('close', () => reader.end());
-    socket.on('error', (err) => reader.end(err));
-    return { socket, reader };
+    socket.on('error', fail);
+    socket.on('close', () => {
+      if (!settled) {
+        settled = true;
+        reject(new Error('stream ended'));
+        return;
+      }
+      reader.end();
+    });
+    socket.once('connect', () => {
+      if (settled) return;
+      settled = true;
+      resolve({ socket, reader });
+    });
   });
+}
+
+// adb forward accepts the host TCP connection before the phone is listening,
+// then closes it. scrcpy sends one 0x00 byte once its socket is really up.
+export async function openScrcpyVideo(port, {
+  isAborted = () => false,
+  onSocket = () => {},
+  attempts = 100,
+  pauseMs = 100,
+} = {}) {
+  let last = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (isAborted()) throw new SessionError(504, '等待手机画面超时。');
+    let opened;
+    try {
+      opened = await connectReader(port);
+      onSocket(opened.socket);
+      const dummy = await opened.reader.read(1);
+      if (dummy[0] !== 0) throw new SessionError(502, 'scrcpy 连接确认异常。');
+      return opened;
+    } catch (err) {
+      try { opened?.socket.destroy(); } catch { /* already closed */ }
+      if (err instanceof SessionError) throw err;
+      if (isAborted()) throw new SessionError(504, '等待手机画面超时。');
+      last = err;
+      if (attempt + 1 < attempts) await delay(pauseMs);
+    }
+  }
+  throw new SessionError(502, `连不上手机上的 scrcpy。${last ? last.message : ''}`);
 }
 
 async function retryConnect(port, isAborted, connect) {
@@ -395,14 +447,14 @@ export function createSessionManager({ runAdb, root }) {
           }
         });
         (async () => {
-          const video = await retryConnect(session.port, () => aborted, connectReader);
-          session.videoSocket = video.socket;
+          const video = await openScrcpyVideo(session.port, {
+            isAborted: () => aborted,
+            onSocket(socket) {
+              session.videoSocket = socket;
+            },
+          });
           session.videoReader = video.reader;
-          const dummy = await video.reader.read(1);
           if (aborted) return;
-          if (dummy[0] !== 0) {
-            throw new SessionError(502, 'scrcpy 连接确认异常。');
-          }
           const controlSocket = await retryConnect(session.port, () => aborted, openSocket);
           session.controlSocket = controlSocket;
           controlSocket.on('data', () => {});
@@ -415,7 +467,11 @@ export function createSessionManager({ runAdb, root }) {
           finish(null);
         })().catch((err) => {
           aborted = true;
-          finish(err instanceof SessionError ? err : new SessionError(502, `打开画面失败。${err.message || ''}`));
+          const detail = err instanceof SessionError ? '' : tail(logs);
+          const message = err instanceof SessionError
+            ? err.message
+            : `打开画面失败。${err.message || ''}${detail}`;
+          finish(err instanceof SessionError ? err : new SessionError(502, message));
         });
       });
 
