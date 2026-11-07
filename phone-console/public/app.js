@@ -641,7 +641,7 @@ function renderTaskForm() {
     type: 'number',
     name: 'limit',
     min: '1',
-    max: '30',
+    max: '2000',
     value: '10',
   });
   const device = el('select', { id: 'task-device', name: 'serial' });

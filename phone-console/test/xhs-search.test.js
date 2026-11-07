@@ -178,6 +178,48 @@ test('login on the phone fails the search instead of succeeding', async () => {
   assert.equal(phone.calls.some((args) => args.includes('swipe')), false);
 });
 
+function notePage(title, likes) {
+  return `
+    <hierarchy>
+      <node class="androidx.recyclerview.widget.RecyclerView" bounds="[0,200][1080,2400]">
+        <node clickable="true" bounds="[20,220][520,980]">
+          <node text="${title}" class="android.widget.TextView" bounds="[40,700][500,780]" />
+          <node text="作者" class="android.widget.TextView" bounds="[40,820][200,880]" />
+          <node text="${likes}" class="android.widget.TextView" bounds="[400,820][500,880]" />
+        </node>
+      </node>
+    </hierarchy>`;
+}
+
+test('search keeps scrolling past eight screens until the requested count', async () => {
+  const pages = Array.from({ length: 12 }, (_, index) => notePage(`笔记${index}`, String(index + 1)));
+  const phone = fakePhone(pages);
+  const notes = await searchXiaohongshu({
+    runAdb: phone.runAdb,
+    serial: 'abc123',
+    keyword: '咖啡',
+    limit: 12,
+    pause: async () => {},
+  });
+  assert.equal(notes.length, 12);
+  assert.equal(notes[11].title, '笔记11');
+  assert.equal(phone.calls.filter((args) => args.includes('swipe')).length, 11);
+});
+
+test('search stops when further screens add no notes and does not invent any', async () => {
+  const phone = fakePhone([notePage('只有这一篇', '3')]);
+  const notes = await searchXiaohongshu({
+    runAdb: phone.runAdb,
+    serial: 'abc123',
+    keyword: '咖啡',
+    limit: 400,
+    pause: async () => {},
+  });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].title, '只有这一篇');
+  assert.equal(phone.calls.filter((args) => args.includes('swipe')).length, 2);
+});
+
 test('loaded notes are returned and missing fields stay empty', async () => {
   const phone = fakePhone([SEARCH_XML]);
   const notes = await searchXiaohongshu({

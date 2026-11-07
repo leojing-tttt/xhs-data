@@ -161,8 +161,8 @@ export function createTaskStore({ execute, file = '', now = () => new Date() } =
     if (!text) throw new TaskError(400, '请填写关键词。');
     if (text.length > 40) throw new TaskError(400, '关键词太长。');
     if (/[\u0000-\u001f;&|`$<>]/.test(text)) throw new TaskError(400, '关键词里有不能用的符号。');
-    if (!Number.isInteger(limit) || limit < 1 || limit > 30) {
-      throw new TaskError(400, '条数要在 1 到 30 之间。');
+    if (!Number.isInteger(limit) || limit < 1 || limit > 2000) {
+      throw new TaskError(400, '条数要在 1 到 2000 之间。');
     }
     if (tasks.some((task) => task.serial === serial && ACTIVE.has(task.status))) {
       throw new TaskError(409, '这台手机已经有任务。等它结束再提交。');

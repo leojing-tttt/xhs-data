@@ -292,13 +292,15 @@ export async function searchXiaohongshu({
   const seen = new Set();
   let stagnant = 0;
   let unread = 0;
-  for (let round = 0; round < 8 && notes.length < limit; round += 1) {
+  let round = 0;
+  while (notes.length < limit) {
     if (round > 0) {
       await swipeUp(runAdb, serial);
       await pause(700);
     } else {
       await pause(1200);
     }
+    round += 1;
     const xml = await dumpUi(runAdb, serial);
     const page = readSearchPage(xml);
     if (page.kind === 'login') {
@@ -308,6 +310,7 @@ export async function searchXiaohongshu({
     if (page.kind === 'unreadable') {
       unread += 1;
       if (notes.length === 0 && unread >= 3) throw new Error(page.reason);
+      if (unread >= 3) break;
       continue;
     }
     unread = 0;

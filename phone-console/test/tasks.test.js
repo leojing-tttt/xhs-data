@@ -56,6 +56,23 @@ test('one phone cannot accept a second task while the first is queued or running
   assert.equal(store.list().length, 2);
 });
 
+test('xhs search accepts 400 notes and rejects a count above 2000', () => {
+  const store = createTaskStore({
+    execute() {
+      return new Promise(() => {});
+    },
+  });
+  const asked = store.submit({ type: 'xhs-search', serial: 'phone-a', keyword: '咖啡', limit: 400 });
+  assert.equal(asked.limit, 400);
+  assert.equal(asked.status, 'queued');
+  const top = store.submit({ type: 'xhs-search', serial: 'phone-b', keyword: '咖啡', limit: 2000 });
+  assert.equal(top.limit, 2000);
+  assert.throws(
+    () => store.submit({ type: 'xhs-search', serial: 'phone-c', keyword: '咖啡', limit: 2001 }),
+    (err) => err instanceof TaskError && err.status === 400 && err.message === '条数要在 1 到 2000 之间。',
+  );
+});
+
 test('failure stays failed with the reason and is not retried', async () => {
   let started = 0;
   const store = createTaskStore({
@@ -129,6 +146,8 @@ test('http submit enqueues and rejects a second task for the same phone', async 
     assert.match(source, /拿到 /);
     assert.match(source, /导出 Excel/);
     assert.match(source, /发布时间/);
+    assert.match(source, /max: '2000'/);
+    assert.match(source, /value: '10'/);
   } finally {
     server.close();
   }
