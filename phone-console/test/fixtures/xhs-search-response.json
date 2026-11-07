@@ -1,0 +1,45 @@
+{
+  "code": 0,
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "model_type": "note",
+        "note": {
+          "id": "66f0c1a2000000001e01abcd",
+          "title": "周末去喝的手冲",
+          "desc": "这是正文，不应出现在结果里",
+          "liked_count": 128,
+          "time": 1731024000,
+          "user": {
+            "nickname": "阿禾",
+            "userid": "aaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      },
+      {
+        "model_type": "note",
+        "note": {
+          "id": "77a0c1a2000000001e01abce",
+          "display_title": "另一篇",
+          "interact_info": { "liked_count": "1.2万" },
+          "user": { "nick_name": "青柠" }
+        }
+      },
+      {
+        "model_type": "hot_query",
+        "hot_query": {
+          "title": "大家都在搜",
+          "queries": [{ "name": "手冲咖啡", "id": "99b0c1a2000000001e01abd0" }]
+        }
+      },
+      {
+        "model_type": "ads",
+        "ads": {
+          "id": "88b0c1a2000000001e01abcf",
+          "title": "购物狂欢"
+        }
+      }
+    ]
+  }
+}

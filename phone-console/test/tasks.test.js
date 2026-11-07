@@ -73,6 +73,33 @@ test('xhs search accepts 400 notes and rejects a count above 2000', () => {
   );
 });
 
+test('a screen fallback keeps the reason on a succeeded task', async () => {
+  const store = createTaskStore({
+    execute() {
+      return {
+        notes: [{
+          title: '屏幕标题',
+          author: '阿禾',
+          publishedAt: '',
+          likes: '1',
+          noteUrl: '',
+          noteId: '',
+          authorUrl: '',
+        }],
+        reason: '没有读到小红书自己的搜索响应，已改用屏幕上的文字。',
+      };
+    },
+  });
+  const task = store.submit({ type: 'xhs-search', serial: 'abc123', keyword: '咖啡', limit: 1 });
+  await tick();
+  await tick();
+  const saved = store.get(task.id);
+  assert.equal(saved.status, 'succeeded');
+  assert.match(saved.error, /搜索响应/);
+  assert.equal(saved.notes[0].title, '屏幕标题');
+  assert.equal(saved.notes[0].noteUrl, '');
+});
+
 test('failure stays failed with the reason and is not retried', async () => {
   let started = 0;
   const store = createTaskStore({

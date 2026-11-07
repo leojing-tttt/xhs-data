@@ -140,12 +140,14 @@ export function createTaskStore({ execute, file = '', now = () => new Date() } =
       persist();
       Promise.resolve()
         .then(() => execute(task))
-        .then((notes) => {
+        .then((result) => {
           if (task.status !== 'running') return;
+          const notes = Array.isArray(result) ? result : result && result.notes;
+          const reason = Array.isArray(result) ? '' : String(result && result.reason ? result.reason : '');
           if (!Array.isArray(notes)) throw new Error('任务没有返回笔记。');
           task.notes = notes.map(blankNote);
           task.status = 'succeeded';
-          task.error = '';
+          task.error = reason;
           task.finishedAt = now().toISOString();
           trim();
           persist();

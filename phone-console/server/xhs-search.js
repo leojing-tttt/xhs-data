@@ -254,12 +254,138 @@ async function swipeUp(runAdb, serial) {
   await adb(runAdb, ['-s', serial, 'shell', 'input', 'swipe', x, y1, x, y2, '350'], 8000);
 }
 
+const SKIP_MODEL = new Set([
+  'ads', 'ad', 'advertisement', 'hot_query', 'recommend_query',
+  'questionnaire', 'dsl', 'banner', 'event', 'search_recommend',
+]);
+
+const SCREEN_FALLBACK = '没有读到小红书自己的搜索响应，已改用屏幕上的文字。';
+
+function firstText(...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+function publishText(value) {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value === 'string' && !/^\d{10,13}$/.test(value.trim())) return value.trim();
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  const ms = n < 1e12 ? n * 1000 : n;
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(ms));
+}
+
+function likeText(card) {
+  const info = card.interact_info || card.interactInfo || {};
+  const value = info.liked_count ?? info.likedCount ?? card.liked_count ?? card.likedCount;
+  if (value === undefined || value === null || value === '') return '';
+  return String(value);
+}
+
+function noteFromResponseNode(node) {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return null;
+  const model = String(node.model_type || node.modelType || '').toLowerCase();
+  if (model && model !== 'note') return null;
+  const card = node.note_card || node.noteCard || node.note;
+  const source = card && typeof card === 'object' ? card : node;
+  const id = firstText(node.id, node.note_id, node.noteId, source.id, source.note_id, source.noteId);
+  if (!/^[0-9A-Za-z]{16,32}$/.test(id)) return null;
+  const user = source.user || source.author || {};
+  const title = firstText(source.display_title, source.displayTitle, source.title);
+  const author = firstText(user.nickname, user.nick_name, user.nickName, user.name);
+  const publishedAt = publishText(source.time ?? source.create_time ?? source.createTime ?? source.publish_time ?? source.publishTime);
+  const likes = likeText(source);
+  if (!title && !author && !likes && !publishedAt) return null;
+  if (!isXhsResultNote({ title: title || '笔记' })) return null;
+  if (NON_NOTE.has(title)) return null;
+  return {
+    noteId: id,
+    title,
+    author,
+    authorUrl: '',
+    publishedAt,
+    likes,
+    noteUrl: `https://www.xiaohongshu.com/explore/${id}`,
+  };
+}
+
+export function notesFromSearchResponse(payload) {
+  const root = typeof payload === 'string' ? JSON.parse(payload) : payload;
+  const notes = [];
+  const seen = new Set();
+  function walk(node, depth) {
+    if (!node || typeof node !== 'object' || depth > 12) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth + 1);
+      return;
+    }
+    const model = String(node.model_type || node.modelType || '').toLowerCase();
+    if (SKIP_MODEL.has(model)) return;
+    const note = noteFromResponseNode(node);
+    if (note && !seen.has(note.noteId)) {
+      seen.add(note.noteId);
+      notes.push(note);
+    }
+    for (const value of Object.values(node)) {
+      if (value && typeof value === 'object') walk(value, depth + 1);
+    }
+  }
+  walk(root, 0);
+  return notes;
+}
+
+export function notesFromCapture(raw) {
+  if (raw == null || raw === '') return [];
+  if (typeof raw === 'object') return notesFromSearchResponse(raw);
+  const text = String(raw).trim();
+  if (!text) return [];
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      return notesFromSearchResponse(JSON.parse(text));
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+async function captureLog(runAdb, serial) {
+  const result = await adb(runAdb, ['-s', serial, 'logcat', '-d', '-t', '500'], 8000);
+  return String(result.stdout || '');
+}
+
+function takeNew(list, seen, incoming, limit) {
+  let added = 0;
+  for (const note of incoming) {
+    const key = note.noteId || `${note.title}\0${note.author}\0${note.likes}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push(note);
+    added += 1;
+    if (list.length >= limit) break;
+  }
+  return added;
+}
+
 export async function searchXiaohongshu({
   runAdb,
   serial,
   keyword,
   limit,
   pause = wait,
+  readResponses = null,
 }) {
   const state = await adb(runAdb, ['-s', serial, 'get-state'], 8000);
   if (String(state.stdout || '').trim() !== 'device') {
@@ -288,12 +414,22 @@ export async function searchXiaohongshu({
     throw new Error(`打不开小红书搜索。${startText.trim().slice(0, 160)}`);
   }
 
-  const notes = [];
-  const seen = new Set();
+  const screenNotes = [];
+  const responseNotes = [];
+  const screenSeen = new Set();
+  const responseSeen = new Set();
+  let sawResponse = false;
   let stagnant = 0;
   let unread = 0;
   let round = 0;
-  while (notes.length < limit) {
+  const read = readResponses || (() => captureLog(runAdb, serial));
+  try {
+    await adb(runAdb, ['-s', serial, 'logcat', '-c'], 5000);
+  } catch {
+    // 清不掉旧日志也继续。后面只认这次读到的搜索响应。
+  }
+
+  while ((sawResponse ? responseNotes.length : screenNotes.length) < limit) {
     if (round > 0) {
       await swipeUp(runAdb, serial);
       await pause(700);
@@ -306,23 +442,33 @@ export async function searchXiaohongshu({
     if (page.kind === 'login') {
       throw new Error('小红书还没登录。请在这台手机上登录后再试。');
     }
-    if (page.kind === 'empty') return notes.slice(0, limit);
+    const captured = notesFromCapture(await read());
+    const responseAdded = takeNew(responseNotes, responseSeen, captured, limit);
+    if (captured.length) sawResponse = true;
+    if (sawResponse) {
+      if (page.kind === 'empty' && responseAdded === 0) break;
+      if (responseAdded === 0) {
+        stagnant += 1;
+        if (stagnant >= 2) break;
+      } else {
+        stagnant = 0;
+      }
+      continue;
+    }
+    if (page.kind === 'empty') {
+      return {
+        notes: screenNotes.slice(0, limit),
+        reason: screenNotes.length ? SCREEN_FALLBACK : '',
+      };
+    }
     if (page.kind === 'unreadable') {
       unread += 1;
-      if (notes.length === 0 && unread >= 3) throw new Error(page.reason);
+      if (screenNotes.length === 0 && unread >= 3) throw new Error(page.reason);
       if (unread >= 3) break;
       continue;
     }
     unread = 0;
-    let added = 0;
-    for (const note of page.notes) {
-      const key = note.noteId || `${note.title}\0${note.author}\0${note.likes}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      notes.push(note);
-      added += 1;
-      if (notes.length >= limit) break;
-    }
+    const added = takeNew(screenNotes, screenSeen, page.notes, limit);
     if (added === 0) {
       stagnant += 1;
       if (stagnant >= 2) break;
@@ -330,6 +476,10 @@ export async function searchXiaohongshu({
       stagnant = 0;
     }
   }
-  if (!notes.length) throw new Error('没有读到已加载的笔记。');
-  return notes.slice(0, limit);
+  if (sawResponse) {
+    if (!responseNotes.length) throw new Error('没有读到已加载的笔记。');
+    return { notes: responseNotes.slice(0, limit), reason: '' };
+  }
+  if (!screenNotes.length) throw new Error('没有读到已加载的笔记。');
+  return { notes: screenNotes.slice(0, limit), reason: SCREEN_FALLBACK };
 }

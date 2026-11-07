@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { readSearchPage, searchXiaohongshu } from '../server/xhs-search.js';
+import { notesFromSearchResponse, readSearchPage, searchXiaohongshu } from '../server/xhs-search.js';
 
 const SEARCH_XML = `
 <hierarchy rotation="0">
@@ -124,6 +125,7 @@ function fakePhone(pages) {
   const runAdb = async (args) => {
     calls.push(args);
     const text = args.join(' ');
+    if (text.includes('logcat')) return { stdout: '', stderr: '' };
     if (text.includes('get-state')) return { stdout: 'device\n', stderr: '' };
     if (text.includes('pm path')) return { stdout: 'package:/data/app/com.xingin.xhs\n', stderr: '' };
     if (text.includes('am start')) return { stdout: 'Starting: Intent { }\n', stderr: '' };
@@ -194,13 +196,15 @@ function notePage(title, likes) {
 test('search keeps scrolling past eight screens until the requested count', async () => {
   const pages = Array.from({ length: 12 }, (_, index) => notePage(`笔记${index}`, String(index + 1)));
   const phone = fakePhone(pages);
-  const notes = await searchXiaohongshu({
+  const result = await searchXiaohongshu({
     runAdb: phone.runAdb,
     serial: 'abc123',
     keyword: '咖啡',
     limit: 12,
     pause: async () => {},
   });
+  const notes = result.notes;
+  assert.match(result.reason, /搜索响应/);
   assert.equal(notes.length, 12);
   assert.equal(notes[11].title, '笔记11');
   assert.equal(phone.calls.filter((args) => args.includes('swipe')).length, 11);
@@ -208,27 +212,69 @@ test('search keeps scrolling past eight screens until the requested count', asyn
 
 test('search stops when further screens add no notes and does not invent any', async () => {
   const phone = fakePhone([notePage('只有这一篇', '3')]);
-  const notes = await searchXiaohongshu({
+  const result = await searchXiaohongshu({
     runAdb: phone.runAdb,
     serial: 'abc123',
     keyword: '咖啡',
     limit: 400,
     pause: async () => {},
   });
+  const notes = result.notes;
+  assert.match(result.reason, /搜索响应/);
   assert.equal(notes.length, 1);
   assert.equal(notes[0].title, '只有这一篇');
   assert.equal(phone.calls.filter((args) => args.includes('swipe')).length, 2);
 });
 
+test('search response fixture supplies the link and leaves missing fields empty', () => {
+  const payload = readFileSync(new URL('./fixtures/xhs-search-response.json', import.meta.url), 'utf8');
+  const notes = notesFromSearchResponse(payload);
+  assert.deepEqual(notes.map((note) => note.title), ['周末去喝的手冲', '另一篇']);
+  assert.equal(notes[0].noteUrl, 'https://www.xiaohongshu.com/explore/66f0c1a2000000001e01abcd');
+  assert.equal(notes[0].noteId, '66f0c1a2000000001e01abcd');
+  assert.equal(notes[0].author, '阿禾');
+  assert.equal(notes[0].likes, '128');
+  assert.equal(notes[0].publishedAt, '2024-11-08 08:00:00');
+  assert.equal(notes[1].noteUrl, 'https://www.xiaohongshu.com/explore/77a0c1a2000000001e01abce');
+  assert.equal(notes[1].author, '青柠');
+  assert.equal(notes[1].likes, '1.2万');
+  assert.equal(notes[1].publishedAt, '');
+  const flat = JSON.stringify(notes);
+  assert.doesNotMatch(flat, /这是正文/);
+  assert.doesNotMatch(flat, /大家都在搜|购物狂欢|88b0c1a2000000001e01abcf/);
+});
+
+test('captured search response is used instead of screen text', async () => {
+  const payload = readFileSync(new URL('./fixtures/xhs-search-response.json', import.meta.url), 'utf8');
+  const phone = fakePhone([notePage('屏幕上的标题', '9')]);
+  const result = await searchXiaohongshu({
+    runAdb: phone.runAdb,
+    serial: 'abc123',
+    keyword: '咖啡',
+    limit: 2,
+    pause: async () => {},
+    readResponses: async () => payload,
+  });
+  assert.equal(result.reason, '');
+  assert.deepEqual(result.notes.map((note) => note.noteUrl), [
+    'https://www.xiaohongshu.com/explore/66f0c1a2000000001e01abcd',
+    'https://www.xiaohongshu.com/explore/77a0c1a2000000001e01abce',
+  ]);
+  assert.equal(result.notes.some((note) => note.title === '屏幕上的标题'), false);
+  assert.equal(phone.calls.filter((args) => args.includes('curl')).length, 0);
+});
+
 test('loaded notes are returned and missing fields stay empty', async () => {
   const phone = fakePhone([SEARCH_XML]);
-  const notes = await searchXiaohongshu({
+  const result = await searchXiaohongshu({
     runAdb: phone.runAdb,
     serial: 'abc123',
     keyword: '咖啡',
     limit: 1,
     pause: async () => {},
   });
+  const notes = result.notes;
+  assert.match(result.reason, /搜索响应/);
   assert.equal(notes.length, 1);
   assert.equal(notes[0].title, '周末去喝的手冲');
   assert.equal(notes[0].noteId, '');
