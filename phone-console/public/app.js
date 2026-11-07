@@ -728,19 +728,25 @@ function renderTaskDetail(task) {
   }
   const table = el('table', { class: 'notes' }, [
     el('thead', {}, [
-      el('tr', {}, ['笔记 ID', '标题', '作者', '作者主页', '点赞', '笔记链接'].map((label) => el('th', { text: label }))),
+      el('tr', {}, ['笔记标题', '笔记链接', '作者姓名', '发布时间', '点赞数'].map((label) => el('th', { text: label }))),
     ]),
     el('tbody', {}, (task.notes || []).map((note) => el('tr', {}, [
-      noteCell(note.noteId),
       noteCell(note.title),
-      noteCell(note.author),
-      el('td', {}, note.authorUrl ? [el('a', { href: note.authorUrl, target: '_blank', rel: 'noreferrer', text: note.authorUrl })] : []),
-      noteCell(note.likes),
       el('td', {}, note.noteUrl ? [el('a', { href: note.noteUrl, target: '_blank', rel: 'noreferrer', text: note.noteUrl })] : []),
+      noteCell(note.author),
+      noteCell(note.publishedAt),
+      noteCell(note.likes),
     ]))),
   ]);
   const head = [
-    el('p', { class: 'count', text: `拿到 ${task.count} 条` }),
+    el('div', { class: 'detail-bar' }, [
+      el('p', { class: 'count', text: `拿到 ${task.count} 条` }),
+      task.count ? el('a', {
+        class: 'ghost',
+        href: `/api/tasks/${task.id}/export`,
+        text: '导出 Excel',
+      }) : null,
+    ].filter(Boolean)),
   ];
   if (task.error) head.push(el('div', { class: 'banner', role: 'alert', text: task.error }));
   slot.replaceChildren(el('section', { class: 'task-detail' }, [

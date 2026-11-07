@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { isSafeSerial } from './devices.js';
 import { getTaskType } from './task-types.js';
+import { isXhsResultNote } from './xhs-search.js';
 
 const STATUS_LABEL = {
   queued: '排队',
@@ -26,13 +27,15 @@ function blankNote(note = {}) {
     title: typeof note.title === 'string' ? note.title : '',
     author: typeof note.author === 'string' ? note.author : '',
     authorUrl: typeof note.authorUrl === 'string' ? note.authorUrl : '',
+    publishedAt: typeof note.publishedAt === 'string' ? note.publishedAt : '',
     likes: typeof note.likes === 'string' ? note.likes : '',
     noteUrl: typeof note.noteUrl === 'string' ? note.noteUrl : '',
   };
 }
 
 function toPublic(task) {
-  const notes = Array.isArray(task.notes) ? task.notes.map(blankNote) : [];
+  let notes = Array.isArray(task.notes) ? task.notes.map(blankNote) : [];
+  if (task.type === 'xhs-search') notes = notes.filter(isXhsResultNote);
   return {
     id: task.id,
     type: task.type,

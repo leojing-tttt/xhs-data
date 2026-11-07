@@ -408,10 +408,23 @@ input:focus { outline: none; border-bottom-color: var(--signal); }
   font-weight: 700;
 }
 
-.count {
+.detail-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
   margin: 0 0 0.8rem;
+}
+
+.count {
+  margin: 0;
   font-family: var(--mono);
   color: var(--signal);
+}
+
+a.ghost {
+  color: inherit;
+  text-decoration: none;
 }
 
 .notes {

@@ -19,6 +19,7 @@ import { TASK_TYPES } from './task-types.js';
 import { createTaskStore } from './tasks.js';
 import { acceptWebSocket, rejectUpgrade } from './ws.js';
 import { searchXiaohongshu } from './xhs-search.js';
+import { exportFilename, notesWorkbook } from './xlsx.js';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -31,6 +32,16 @@ const TYPES = {
 
 export function appRoot() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+}
+
+function sendBytes(res, status, body, headers) {
+  res.writeHead(status, {
+    'content-length': body.length,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    ...headers,
+  });
+  res.end(body);
 }
 
 function sendJson(res, status, body) {
@@ -207,6 +218,26 @@ export function createApp(options = {}) {
         return;
       }
       sendJson(res, 200, { tasks: tasks.list() });
+      return;
+    }
+
+    const exportMatch = url.pathname.match(/^\/api\/tasks\/([a-f0-9]{16})\/export$/);
+    if (exportMatch && req.method === 'GET') {
+      const user = currentUser(req);
+      if (!user) {
+        sendJson(res, 401, { error: 'unauthorized', message: '请先登录。' });
+        return;
+      }
+      const task = tasks.get(exportMatch[1]);
+      if (!task) {
+        sendJson(res, 404, { error: 'not-found', message: '没有这个任务。' });
+        return;
+      }
+      const filename = exportFilename(task.keyword);
+      sendBytes(res, 200, notesWorkbook(task.notes), {
+        'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'content-disposition': `attachment; filename="xhs-notes.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      });
       return;
     }
 

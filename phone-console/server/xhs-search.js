@@ -9,8 +9,11 @@ const CHROME = new Set([
 const LOGIN_MARKS = ['手机号登录', '验证码登录', '获取验证码', '其他登录方式', '一键登录'];
 const EMPTY_MARKS = ['没有找到相关内容', '暂无相关内容', '换个词搜索', '无相关结果', '没有更多内容'];
 
-const NOTE_URL = /https?:\/\/(?:www\.)?xiaohongshu\.com\/(?:explore|discovery\/item)\/([0-9A-Za-z]{16,32})/;
 const USER_URL = /https?:\/\/(?:www\.)?xiaohongshu\.com\/user\/profile\/[0-9A-Za-z]+/;
+const NON_NOTE = new Set([
+  '大家都在搜', '相关搜索', '猜你想搜', '你可能想搜', '热门搜索', '购物狂欢',
+]);
+const BADGE = new Set(['广告', '赞助', '品牌合作', '直播', '直播中', '置顶', '赞']);
 
 function decodeXml(value) {
   return String(value || '')
@@ -80,7 +83,39 @@ function walk(node, visit) {
 }
 
 function isLike(text) {
-  return /^(\d+(\.\d+)?)([万wW])?$/.test(text);
+  return /^\d+(?:\.\d+)?[万wW]$|^\d+$/.test(text);
+}
+
+function isDuration(text) {
+  return /^\d{1,2}:\d{2}$/.test(text);
+}
+
+function isDateRange(text) {
+  return /^\d{1,2}\.\d{1,2}\s*[-~～到至]\s*\d{1,2}\.\d{1,2}$/.test(text);
+}
+
+function isPublishTime(text) {
+  return /^(?:刚刚|昨天|前天|\d+\s*(?:分钟|小时|天|周|个月|年)前|\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?|\d{1,2}月\d{1,2}日|编辑于\s*.+)$/.test(text);
+}
+
+function linkFromBlob(blob) {
+  if (!blob) return null;
+  const explore = String(blob).match(/https?:\/\/(?:www\.)?xiaohongshu\.com\/(?:explore|discovery\/item)\/([0-9A-Za-z]{16,32})/);
+  if (explore) {
+    return { noteId: explore[1], noteUrl: `https://www.xiaohongshu.com/explore/${explore[1]}` };
+  }
+  const scheme = String(blob).match(/xhsdiscover:\/\/(?:item|note|explore|discovery\/item)\/([0-9A-Za-z]{16,32})/);
+  if (scheme) {
+    return { noteId: scheme[1], noteUrl: `https://www.xiaohongshu.com/explore/${scheme[1]}` };
+  }
+  const short = String(blob).match(/https?:\/\/xhslink\.com\/[0-9A-Za-z/._~-]+/);
+  if (short) return { noteId: '', noteUrl: short[0] };
+  return null;
+}
+
+export function isXhsResultNote(note) {
+  const title = String(note?.title || '').trim();
+  return Boolean(title) && !NON_NOTE.has(title);
 }
 
 function collectTextNodes(node, out = []) {
@@ -96,10 +131,10 @@ function findUrls(node, found = { noteId: '', noteUrl: '', authorUrl: '' }) {
   for (const blob of blobs) {
     if (!blob) continue;
     if (!found.noteUrl) {
-      const note = blob.match(NOTE_URL);
+      const note = linkFromBlob(blob);
       if (note) {
-        found.noteUrl = note[0];
-        found.noteId = note[1];
+        found.noteUrl = note.noteUrl;
+        found.noteId = note.noteId;
       }
     }
     if (!found.authorUrl) {
@@ -115,16 +150,28 @@ function noteFromCard(card) {
   const texts = collectTextNodes(card)
     .filter((item) => item.text && !CHROME.has(item.text))
     .sort((a, b) => a.y - b.y || a.text.length - b.text.length);
+  if (texts.some((item) => NON_NOTE.has(item.text))) return null;
   const like = [...texts].reverse().find((item) => isLike(item.text));
-  const words = texts.filter((item) => !isLike(item.text));
+  const dated = texts.some((item) => isDateRange(item.text));
+  const rest = texts.filter((item) => !isDateRange(item.text) && !BADGE.has(item.text));
+  if (dated && !like && rest.every((item) => item.text.length <= 8)) return null;
+  const time = texts.find((item) => isPublishTime(item.text));
+  const words = texts.filter((item) => (
+    item !== like
+    && item !== time
+    && !BADGE.has(item.text)
+    && !isDuration(item.text)
+    && !isDateRange(item.text)
+  ));
   const title = words[0]?.text || '';
-  if (!title) return null;
+  if (!title || NON_NOTE.has(title)) return null;
   const urls = findUrls(card);
   return {
     noteId: urls.noteId,
     title,
     author: words[1]?.text || '',
     authorUrl: urls.authorUrl,
+    publishedAt: time?.text || '',
     likes: like?.text || '',
     noteUrl: urls.noteUrl,
   };
