@@ -1,0 +1,3 @@
+config/session-secret
+data/
+npm-debug.log*

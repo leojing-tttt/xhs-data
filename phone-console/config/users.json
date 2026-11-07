@@ -1,0 +1,17 @@
+{
+  "users": [
+    {
+      "username": "leijing",
+      "displayName": "雷靖",
+      "password": {
+        "algorithm": "scrypt",
+        "salt": "ab7562b765438b9e146fc5dc4658ea01",
+        "hash": "b3ddb734e145510ae05d50123cdcbd080798c607524bf1ccdd2f54531486af3e",
+        "keylen": 32,
+        "cost": 16384,
+        "blockSize": 8,
+        "parallelization": 1
+      }
+    }
+  ]
+}
