@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<!-- 演示层：a3-* 样式，不是 Ant Design 产品组件。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>小红书搜索</title>
+  <link rel="stylesheet" href="/a3-components.css">
+  <link rel="stylesheet" href="/page.css">
+</head>
+<body>
+  <header class="console-header">
+    <h1 class="console-title">小红书搜索</h1>
+    <span class="console-login">登录：本机占位，未接用户中心</span>
+  </header>
+  <main class="console-wrap">
+    <div class="a3-alert a3-alert-info a3-mb-16">
+      在这一台电脑上打开小红书网页，只读取页面自己的搜索结果，再导出 Excel。不绕过登录、验证码和频控，失败不会自动重试。
+    </div>
+    <div class="console-grid">
+      <section class="a3-card">
+        <div class="a3-card-header">新建搜索</div>
+        <form id="search-form" class="a3-card-body console-form" novalidate>
+          <div class="a3-mb-16">
+            <label class="console-label" for="task-type">任务类型</label>
+            <input id="task-type" class="a3-input" value="小红书搜索" readonly>
+          </div>
+          <div class="a3-mb-16">
+            <label class="console-label" for="keyword">关键词 <span class="a3-text-brand">*</span></label>
+            <span class="a3-input-wrapper">
+              <input id="keyword" name="keyword" class="a3-input" maxlength="200" autocomplete="off" required>
+            </span>
+          </div>
+          <div class="a3-mb-16">
+            <label class="console-label" for="count">条数 <span class="a3-text-brand">*</span></label>
+            <span class="a3-input-wrapper">
+              <input id="count" name="count" class="a3-input" type="number" min="1" max="2000" value="100" required>
+            </span>
+            <p class="console-help">1 到 2000，默认 100。</p>
+          </div>
+          <div class="a3-mb-16">
+            <label class="console-label" for="sort">排序</label>
+            <span class="a3-select-wrapper">
+              <select id="sort" name="sort" class="a3-select">
+                <option value="综合" selected>综合</option>
+                <option value="最新">最新</option>
+                <option value="最多点赞">最多点赞</option>
+                <option value="最多评论">最多评论</option>
+                <option value="最多收藏">最多收藏</option>
+              </select>
+            </span>
+          </div>
+          <div class="a3-mb-16">
+            <label class="console-label" for="note-type">笔记类型</label>
+            <span class="a3-select-wrapper">
+              <select id="note-type" name="noteType" class="a3-select">
+                <option value="不限" selected>不限</option>
+                <option value="视频">视频</option>
+                <option value="图文">图文</option>
+                <option value="直播">直播</option>
+              </select>
+            </span>
+          </div>
+          <div class="a3-mb-16">
+            <label class="console-label" for="publish-time">发布时间</label>
+            <span class="a3-select-wrapper">
+              <select id="publish-time" name="publishTime" class="a3-select">
+                <option value="不限" selected>不限</option>
+                <option value="一天内">一天内</option>
+                <option value="一周内">一周内</option>
+                <option value="半年内">半年内</option>
+              </select>
+            </span>
+            <p class="console-help">只有「综合 / 不限 / 不限」会打开搜索。其他选项会失败：现有搜索响应钩子没有这些官方参数名，这一版不猜测。</p>
+          </div>
+          <div id="form-error" class="a3-alert a3-alert-danger a3-mb-16" hidden></div>
+          <div class="console-actions">
+            <button id="submit" class="a3-btn a3-btn-primary" type="submit">开始搜索</button>
+          </div>
+        </form>
+      </section>
+      <section class="a3-card">
+        <div class="a3-card-header">
+          <span>任务</span>
+          <button id="refresh" class="a3-btn a3-btn-default a3-btn-sm" type="button">刷新</button>
+        </div>
+        <div class="a3-card-body console-table-scroll">
+          <table class="a3-table">
+            <thead>
+              <tr>
+                <th>类型</th>
+                <th>关键词</th>
+                <th>条数</th>
+                <th>排序</th>
+                <th>笔记类型</th>
+                <th>发布时间</th>
+                <th>状态</th>
+                <th>结果</th>
+              </tr>
+            </thead>
+            <tbody id="task-body"></tbody>
+          </table>
+          <div id="task-empty" class="a3-empty">还没有任务</div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

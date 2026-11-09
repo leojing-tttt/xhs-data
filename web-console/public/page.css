@@ -1,0 +1,102 @@
+/* 演示层页面壳。视觉用 a3-* 变量，不是 Ant Design。 */
+
+body {
+  margin: 0;
+  color: var(--a3-text-primary);
+  background: var(--a3-bg-body);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+
+.console-header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  background: var(--a3-bg-card);
+  border-bottom: 1px solid var(--a3-border);
+}
+
+.console-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--a3-primary);
+}
+
+.console-login {
+  font-size: 13px;
+  color: var(--a3-text-secondary);
+}
+
+.console-wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 20px 24px 40px;
+}
+
+.console-grid {
+  display: grid;
+  grid-template-columns: 380px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.console-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.console-help {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--a3-text-secondary);
+  line-height: 1.5;
+}
+
+.console-form .a3-input-wrapper,
+.console-form .a3-select-wrapper {
+  width: 100%;
+  max-width: none;
+}
+
+.console-form .a3-select-wrapper::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--a3-text-disabled);
+  border-bottom: 1.5px solid var(--a3-text-disabled);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+.console-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.console-table-scroll {
+  overflow-x: auto;
+}
+
+.a3-table th:nth-child(-n+7),
+.a3-table td:nth-child(-n+7) {
+  white-space: nowrap;
+}
+
+.console-result {
+  max-width: 360px;
+  white-space: normal;
+  line-height: 1.5;
+}
+
+@media (max-width: 860px) {
+  .console-grid {
+    grid-template-columns: 1fr;
+  }
+}

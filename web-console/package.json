@@ -1,0 +1,9 @@
+{
+  "name": "xhs-web-console",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test"
+  }
+}
