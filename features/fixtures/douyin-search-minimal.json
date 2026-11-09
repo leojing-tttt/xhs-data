@@ -1,0 +1,18 @@
+{
+  "status_code": 0,
+  "has_more": 0,
+  "cursor": 10,
+  "data": [
+    {
+      "type": 1,
+      "aweme_info": {
+        "aweme_id": "7000000000000000099",
+        "desc": "只有标题",
+        "author": {
+          "nickname": "只有昵称",
+          "sec_uid": "MS4wLjABAAAAsample"
+        }
+      }
+    }
+  ]
+}

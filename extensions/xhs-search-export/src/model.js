@@ -9,7 +9,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const EMPTY_EXPORT_MESSAGE = '还没有捕获到笔记。请先在搜索结果页向下浏览，等笔记出现在列表里后再导出。';
   const RECOMMEND_EMPTY_MESSAGE = '还没有捕获到笔记。请先在推荐页向下浏览，等笔记出现在列表里后再导出。';
+  const DOUYIN_EMPTY_MESSAGE = '还没有捕获到视频。请先在搜索结果页向下浏览，等视频出现在列表里后再导出。';
   const NOT_SEARCH_MESSAGE = '当前页面不是小红书推荐页或搜索结果页';
+  const NOT_DOUYIN_SEARCH_MESSAGE = '当前页面不是抖音搜索结果页';
   const INVALID_TARGET_MESSAGE = '请输入 1 到 2000 的整数';
   const PAGE_LEFT_MESSAGE = '页面已切换，已停止继续加载';
   const DEFAULT_TARGET = 100;
@@ -17,7 +19,7 @@
   const EMPTY_ROUND_LIMIT = 3;
   const MIN_GAP_MS = 1000;
   const OPTIONAL_COLUMNS = ['作者ID', '点赞数', '笔记类型', '封面图'];
-  const TEXT_COLUMNS = new Set(['笔记ID', '标题', '作者', '作者ID', '作者主页', '笔记类型', '封面图', '笔记链接']);
+  const TEXT_COLUMNS = new Set(['笔记ID', '标题', '作者', '作者ID', '作者主页', '笔记类型', '封面图', '笔记链接', '视频ID', '视频链接']);
 
   function createStore() {
     const notes = [];
@@ -85,13 +87,18 @@
     };
   }
 
+  function preserveLongIds(text) {
+    return text.replace(/("(aweme_id|uid)"\s*:\s*)(-?\d{16,})/g, '$1"$3"');
+  }
+
   function parseSearchResponse(payload) {
     let data = payload;
     if (typeof payload === 'string') {
       const text = payload.trim();
       if (!text) return { recognized: false, notes: [] };
+      const prepared = text.indexOf('aweme_id') === -1 ? text : preserveLongIds(text);
       try {
-        data = JSON.parse(text);
+        data = JSON.parse(prepared);
       } catch (error) {
         return { recognized: false, notes: [] };
       }
@@ -99,6 +106,8 @@
     if (!data || typeof data !== 'object') {
       return { recognized: false, notes: [] };
     }
+    const douyin = parseDouyinResponse(data);
+    if (douyin.recognized) return douyin;
     const items = findItems(data);
     if (!items) return { recognized: false, notes: [] };
     const notes = [];
@@ -110,6 +119,82 @@
       notes.push(note);
     }
     return { recognized: true, notes };
+  }
+
+  function parseDouyinResponse(data) {
+    const items = findDouyinList(data);
+    if (!items) return { recognized: false, notes: [] };
+    const notes = [];
+    const seen = new Set();
+    for (let index = 0; index < items.length; index += 1) {
+      const note = videoFromItem(items[index]);
+      if (!note || seen.has(note.id)) continue;
+      seen.add(note.id);
+      notes.push(note);
+    }
+    return { recognized: true, notes };
+  }
+
+  function findDouyinList(data) {
+    const roots = [data];
+    if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) roots.push(data.data);
+    for (let index = 0; index < roots.length; index += 1) {
+      const root = roots[index];
+      if (Array.isArray(root.aweme_list)) return root.aweme_list;
+      if (!Array.isArray(root.data)) continue;
+      if (listHasAweme(root.data) || (root.data.length === 0 && hasDouyinEnvelope(root))) return root.data;
+    }
+    return null;
+  }
+
+  function listHasAweme(list) {
+    return list.some(function (item) {
+      if (!item || typeof item !== 'object') return false;
+      if (item.aweme_info && typeof item.aweme_info === 'object') return true;
+      return Object.prototype.hasOwnProperty.call(item, 'aweme_id');
+    });
+  }
+
+  function hasDouyinEnvelope(root) {
+    return Object.prototype.hasOwnProperty.call(root, 'status_code')
+      && (Object.prototype.hasOwnProperty.call(root, 'has_more') || Object.prototype.hasOwnProperty.call(root, 'cursor'));
+  }
+
+  function videoFromItem(item) {
+    if (!item || typeof item !== 'object') return null;
+    const aweme = item.aweme_info && typeof item.aweme_info === 'object' ? item.aweme_info : item;
+    if (!Object.prototype.hasOwnProperty.call(aweme, 'aweme_id')) return null;
+    const idValue = aweme.aweme_id;
+    if (idValue == null || idValue === '') return null;
+    const author = aweme.author && typeof aweme.author === 'object' ? aweme.author : {};
+    const titleField = readOwn(aweme, ['desc']);
+    const authorField = readOwn(author, ['nickname']);
+    const authorIdField = readOwn(author, ['uid']);
+    const stats = aweme.statistics && typeof aweme.statistics === 'object' ? aweme.statistics : null;
+    const likesField = stats ? readOwn(stats, ['digg_count']) : { present: false, value: undefined };
+    const shareInfo = aweme.share_info && typeof aweme.share_info === 'object' ? aweme.share_info : null;
+    const shareField = shareInfo ? readOwn(shareInfo, ['share_url']) : { present: false, value: undefined };
+    const directShare = readOwn(aweme, ['share_url']);
+    const fromShare = Boolean(shareField.present || directShare.present);
+    const id = String(idValue);
+    const note = {
+      id: id,
+      site: 'douyin',
+      title: titleField.present ? String(titleField.value) : '',
+      author: authorField.present ? String(authorField.value) : '',
+      profile: '',
+      link: shareField.present
+        ? String(shareField.value)
+        : (directShare.present ? String(directShare.value) : ('https://www.douyin.com/video/' + id)),
+      linkFromShare: fromShare,
+      present: {
+        作者ID: authorIdField.present,
+        点赞数: Boolean(likesField.present || likesField.zero),
+      },
+    };
+    if (authorIdField.present) note.authorId = String(authorIdField.value);
+    if (likesField.present || likesField.zero) note.likes = likesField.value;
+    return note;
   }
 
   function findItems(data) {
@@ -207,6 +292,10 @@
     if (!existing.profile && incoming.profile) existing.profile = incoming.profile;
     if (!existing.author && incoming.author) existing.author = incoming.author;
     if (!existing.title && incoming.title) existing.title = incoming.title;
+    if (incoming.site === 'douyin' && incoming.linkFromShare && !existing.linkFromShare) {
+      existing.link = incoming.link;
+      existing.linkFromShare = true;
+    }
   }
 
   function readCover(card) {
@@ -427,6 +516,9 @@
   }
 
   function toTable(notes) {
+    if (notes.some(function (note) { return note && note.site === 'douyin'; })) {
+      return douyinTable(notes.filter(function (note) { return note && note.site === 'douyin'; }));
+    }
     const headers = ['笔记ID', '标题', '作者'];
     if (notes.some((note) => note.present && note.present['作者ID'])) headers.push('作者ID');
     headers.push('作者主页');
@@ -441,9 +533,23 @@
     };
   }
 
+  function douyinTable(notes) {
+    const headers = ['视频ID', '标题', '作者'];
+    if (notes.some(function (note) { return note.present && note.present['作者ID']; })) headers.push('作者ID');
+    if (notes.some(function (note) { return note.present && note.present['点赞数']; })) headers.push('点赞数');
+    headers.push('视频链接');
+    return {
+      headers: headers,
+      rows: notes.map(function (note) {
+        return headers.map(function (header) { return cellValue(note, header); });
+      }),
+    };
+  }
+
   function cellValue(note, header) {
     switch (header) {
       case '笔记ID': return note.id;
+      case '视频ID': return note.id;
       case '标题': return note.title || '';
       case '作者': return note.author || '';
       case '作者ID': return note.authorId || '';
@@ -452,6 +558,7 @@
       case '笔记类型': return note.type || '';
       case '封面图': return note.cover || '';
       case '笔记链接': return note.link || '';
+      case '视频链接': return note.link || '';
       default: return '';
     }
   }
@@ -486,15 +593,16 @@
     }
   }
 
-  function formatExportFilename(keyword, date, mode) {
+  function formatExportFilename(keyword, date, mode, site) {
     const when = date instanceof Date ? date : new Date(date);
     const stamp = [
       String(when.getFullYear()),
       pad(when.getMonth() + 1),
       pad(when.getDate()),
     ].join('') + '-' + pad(when.getHours()) + pad(when.getMinutes());
-    if (mode === 'recommend') return '小红书推荐_' + stamp + '.xlsx';
-    return '小红书搜索_' + safeKeyword(keyword) + '_' + stamp + '.xlsx';
+    const brand = site === 'douyin' ? '抖音' : '小红书';
+    if (mode === 'recommend') return brand + '推荐_' + stamp + '.xlsx';
+    return brand + '搜索_' + safeKeyword(keyword) + '_' + stamp + '.xlsx';
   }
 
   function pad(value) {
@@ -513,27 +621,80 @@
     'www.xiaohongshu.com': true,
     'xiaohongshu.com': true,
   };
+  const DOUYIN_HOSTS = {
+    'www.douyin.com': true,
+    'douyin.com': true,
+  };
+
+  function deniedPage(site, message) {
+    return {
+      allowed: false,
+      site: site || '',
+      siteLabel: site === 'douyin' ? '抖音' : (site === 'xiaohongshu' ? '小红书' : ''),
+      mode: '',
+      label: '',
+      keyword: '',
+      message: message,
+    };
+  }
 
   function describePage(url) {
     let parsed;
     try {
       parsed = new URL(url);
     } catch (error) {
-      return { allowed: false, keyword: '', message: NOT_SEARCH_MESSAGE };
+      return deniedPage('', NOT_SEARCH_MESSAGE);
     }
     const path = parsed.pathname || '';
     const protocolOk = parsed.protocol === 'https:' || parsed.protocol === 'http:';
-    const mode = protocolOk && SEARCH_HOSTS[parsed.hostname] ? pageMode(path) : '';
-    if (!mode) {
-      return { allowed: false, mode: '', label: '', keyword: '', message: NOT_SEARCH_MESSAGE };
+    if (!protocolOk) return deniedPage('', NOT_SEARCH_MESSAGE);
+    if (SEARCH_HOSTS[parsed.hostname]) {
+      const mode = pageMode(path);
+      if (!mode) return deniedPage('xiaohongshu', NOT_SEARCH_MESSAGE);
+      return {
+        allowed: true,
+        site: 'xiaohongshu',
+        siteLabel: '小红书',
+        mode: mode,
+        label: mode === 'recommend' ? '推荐' : '搜索',
+        keyword: mode === 'search' ? (parsed.searchParams.get('keyword') || '') : '',
+        message: '',
+      };
     }
-    return {
-      allowed: true,
-      mode: mode,
-      label: mode === 'recommend' ? '推荐' : '搜索',
-      keyword: mode === 'search' ? (parsed.searchParams.get('keyword') || '') : '',
-      message: '',
-    };
+    if (DOUYIN_HOSTS[parsed.hostname]) {
+      if (!isDouyinSearchPath(path)) return deniedPage('douyin', NOT_DOUYIN_SEARCH_MESSAGE);
+      return {
+        allowed: true,
+        site: 'douyin',
+        siteLabel: '抖音',
+        mode: 'search',
+        label: '搜索',
+        keyword: douyinKeyword(parsed),
+        message: '',
+      };
+    }
+    return deniedPage('', NOT_SEARCH_MESSAGE);
+  }
+
+  function isDouyinSearchPath(path) {
+    return path === '/search' || path === '/search/' || path.indexOf('/search/') === 0;
+  }
+
+  function douyinKeyword(parsed) {
+    const path = parsed.pathname || '';
+    if (path.indexOf('/search/') === 0) {
+      const segment = path.slice('/search/'.length).split('/').filter(Boolean)[0] || '';
+      if (segment) return decodePathSegment(segment);
+    }
+    return parsed.searchParams.get('keyword') || '';
+  }
+
+  function decodePathSegment(value) {
+    try {
+      return decodeURIComponent(value);
+    } catch (error) {
+      return value;
+    }
   }
 
   function isPath(path, base) {
@@ -628,8 +789,8 @@
     }
     roots.forEach(function (root) {
       if (hasMore === null) {
-        if (typeof root.has_more === 'boolean') hasMore = root.has_more;
-        else if (typeof root.hasMore === 'boolean') hasMore = root.hasMore;
+        hasMore = readHasMore(root.has_more);
+        if (hasMore === null) hasMore = readHasMore(root.hasMore);
       }
       if (!cursor) {
         cursor = firstText(root, ['cursor_score', 'cursorScore', 'cursor', 'next_cursor', 'nextCursor']);
@@ -638,6 +799,12 @@
       if (!searchId) searchId = firstText(root, ['search_id', 'searchId']);
     });
     return { hasMore: hasMore, cursor: cursor, cursorRaw: cursorRaw, searchId: searchId };
+  }
+
+  function readHasMore(value) {
+    if (typeof value === 'boolean') return value;
+    if (value === 0 || value === 1) return value === 1;
+    return null;
   }
 
   function bumpPage(value) {
@@ -869,6 +1036,7 @@
       nextPageRequest(page) {
         blocked = '';
         if (!page || (page.mode !== 'search' && page.mode !== 'recommend')) return null;
+        if (page.site === 'douyin') return null;
         if (states[page.mode].hasMore === false) return null;
         const built = buildNextPageRequest(requests[page.mode], states[page.mode], this.storeFor(page).list().length);
         if (built && built.url) return built;
@@ -1009,38 +1177,46 @@
       return { download: false, filename: '', message: page.message };
     }
     if (!notes.length) {
-      return { download: false, filename: '', message: emptyMessage(page.mode) };
+      return { download: false, filename: '', message: emptyMessage(page.mode, page.site) };
     }
     const keyword = options && options.keyword ? options.keyword : page.keyword;
     return {
       download: true,
-      filename: formatExportFilename(keyword, options.now || new Date(), page.mode),
+      filename: formatExportFilename(keyword, options.now || new Date(), page.mode, page.site),
       message: '',
     };
   }
 
-  function emptyMessage(mode) {
+  function emptyMessage(mode, site) {
+    if (site === 'douyin') return DOUYIN_EMPTY_MESSAGE;
     return mode === 'recommend' ? RECOMMEND_EMPTY_MESSAGE : EMPTY_EXPORT_MESSAGE;
   }
 
   function panelView(count, page, options) {
+    const site = page && page.site === 'douyin' ? 'douyin' : 'xiaohongshu';
+    const siteLabel = site === 'douyin' ? '抖音' : '小红书';
     const mode = page && page.mode === 'recommend' ? 'recommend' : 'search';
     const label = mode === 'recommend' ? '推荐' : '搜索';
+    const unit = site === 'douyin' ? '视频' : '笔记';
     return {
+      site: site,
+      siteLabel: siteLabel,
       mode: mode,
-      modeLabel: label,
+      modeLabel: siteLabel + ' · ' + label,
       title: mode === 'recommend' ? '导出推荐' : '导出搜索',
-      countText: '已捕获 ' + count + ' 条笔记',
+      countText: '已捕获 ' + count + ' 条' + unit,
       targetLabel: '目标条数',
       targetValue: options && Object.prototype.hasOwnProperty.call(options, 'targetValue')
         ? String(options.targetValue)
         : String(DEFAULT_TARGET),
       buttonText: '导出 Excel',
       hint: count === 0
-        ? emptyMessage(mode)
-        : (mode === 'recommend'
-          ? '当前只导出推荐列表，不会带上搜索结果。'
-          : '当前只导出这次搜索，不会带上推荐页。'),
+        ? emptyMessage(mode, site)
+        : (site === 'douyin'
+          ? '当前只导出这次抖音搜索。'
+          : (mode === 'recommend'
+            ? '当前只导出推荐列表，不会带上搜索结果。'
+            : '当前只导出这次搜索，不会带上推荐页。')),
     };
   }
 
@@ -1048,7 +1224,9 @@
     const doc = container.ownerDocument;
     container.textContent = '';
     const mode = doc.createElement('p');
-    mode.className = 'mode' + (view.mode === 'recommend' ? ' recommend' : '');
+    mode.className = 'mode'
+      + (view.mode === 'recommend' ? ' recommend' : '')
+      + (view.site === 'douyin' ? ' douyin' : '');
     mode.setAttribute('data-role', 'mode');
     mode.textContent = view.modeLabel || '搜索';
     const count = doc.createElement('p');

@@ -1,4 +1,4 @@
-const SITE = /^https?:\/\/(?:www\.)?xiaohongshu\.com(?:\/|$)/i;
+const SITE = /^https?:\/\/(?:www\.)?(?:xiaohongshu|douyin)\.com(?:\/|$)/i;
 
 function inject(tabId, url) {
   if (tabId == null || !url || !SITE.test(url)) return;
@@ -23,6 +23,10 @@ function injectOpenTabs() {
       'https://xiaohongshu.com/*',
       'http://www.xiaohongshu.com/*',
       'http://xiaohongshu.com/*',
+      'https://www.douyin.com/*',
+      'https://douyin.com/*',
+      'http://www.douyin.com/*',
+      'http://douyin.com/*',
     ],
   }, function (tabs) {
     (tabs || []).forEach(function (tab) {

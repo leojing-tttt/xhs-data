@@ -1,0 +1,53 @@
+{
+  "status_code": 0,
+  "has_more": 1,
+  "cursor": 10,
+  "data": [
+    {
+      "type": 1,
+      "aweme_info": {
+        "aweme_id": 7123456789012345678,
+        "desc": "装修避坑",
+        "author": {
+          "uid": "10001",
+          "nickname": "装修日记",
+          "sec_uid": "MS4wLjABAAAAsample"
+        },
+        "statistics": {
+          "digg_count": 128,
+          "comment_count": 3
+        },
+        "share_info": {
+          "share_url": "https://www.iesdouyin.com/share/video/7123456789012345678/?region=CN&mid=0&u_code=0&did=0&iid=0&with_sec_did=1&titleType=title&share_sign=fixture-sign&share_version=1&ts=1700000000&from_aid=6383&from_ssr=1",
+          "share_title": "装修避坑"
+        }
+      }
+    },
+    {
+      "type": 1,
+      "aweme_info": {
+        "aweme_id": "7000000000000000002",
+        "desc": "第二条没有分享链接",
+        "author": {
+          "nickname": "第二条作者",
+          "sec_uid": "MS4wLjABAAAAsample"
+        },
+        "statistics": {
+          "digg_count": 0,
+          "comment_count": 1
+        }
+      }
+    },
+    {
+      "type": 4,
+      "user_list": [
+        {
+          "user_info": {
+            "uid": "999",
+            "nickname": "不该出现的用户"
+          }
+        }
+      ]
+    }
+  ]
+}
