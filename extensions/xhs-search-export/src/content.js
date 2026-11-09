@@ -32,6 +32,7 @@
     '  font-weight: 600;',
     '}',
     '.mode.recommend { background: #f3f4f6; color: #111; }',
+    '.mode.douyin { background: #161823; color: #fff; }',
     '.count, .hint { margin: 0; }',
     'label {',
     '  display: block;',
@@ -67,7 +68,7 @@
   panel.className = 'panel';
   const title = document.createElement('p');
   title.className = 'title';
-  title.textContent = '小红书导出';
+  title.textContent = '搜索导出';
   const body = document.createElement('div');
   panel.append(title, body);
   shadow.append(style, panel);
@@ -118,7 +119,7 @@
     session.useVisibleCards(page, document);
     ensureHost();
     const view = api.panelView(store.list().length, page, { targetValue: targetDraft });
-    title.textContent = view.title;
+    title.textContent = (view.siteLabel || '小红书') + ' · ' + view.title;
     if (hintOverride) view.hint = hintOverride;
     const parts = api.renderPanel(body, view);
     parts.target.addEventListener('input', function () {
@@ -176,6 +177,26 @@
         last.scrollIntoView({ block: 'end' });
       } catch (error) {}
     }
+    if (currentPage().site === 'douyin') scrollInnerList();
+  }
+
+  function scrollInnerList() {
+    const nodes = document.querySelectorAll('main, section, div');
+    let best = null;
+    let bestRoom = 240;
+    for (let index = 0; index < nodes.length; index += 1) {
+      const node = nodes[index];
+      if (!node || node.id === 'xhs-search-export-root') continue;
+      const room = node.scrollHeight - node.clientHeight;
+      if (room > bestRoom && node.clientHeight >= 240) {
+        best = node;
+        bestRoom = room;
+      }
+    }
+    if (!best) return;
+    try {
+      best.scrollTop = best.scrollHeight;
+    } catch (error) {}
   }
 
   async function exportNotes() {
@@ -277,7 +298,7 @@
     if (!kind || kind !== page.mode) return;
     const store = activeStore(page);
     if (page.mode === 'search') store.setKeyword(page.keyword);
-    store.ingestPayload(data.body);
+    session.ingest(page, data.body, kind);
     paint();
   });
 

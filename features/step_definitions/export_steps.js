@@ -515,6 +515,130 @@ Then('会注入内容脚本', function () {
   assert.equal(this.injected, true);
 });
 
+Then('当前站点为{string}', function (label) {
+  assert.equal(this.page.siteLabel, label);
+});
+
+Then('捕获到{int}条视频', function (count) {
+  assert.equal(this.store.list().length, count);
+});
+
+Then('第{int}条视频的视频ID为{string}', function (index, id) {
+  assert.equal(noteAt(this, index).id, id);
+});
+
+Then('第{int}条视频的标题为{string}', function (index, title) {
+  assert.equal(noteAt(this, index).title, title);
+});
+
+Then('第{int}条视频的作者为{string}', function (index, author) {
+  assert.equal(noteAt(this, index).author, author);
+});
+
+Then('第{int}条视频的作者ID为{string}', function (index, authorId) {
+  assert.equal(noteAt(this, index).authorId, authorId);
+});
+
+Then('第{int}条视频的点赞数为{string}', function (index, likes) {
+  assert.equal(String(noteAt(this, index).likes), likes);
+});
+
+Then('第{int}条视频的视频链接为{string}', function (index, link) {
+  assert.equal(noteAt(this, index).link, link);
+});
+
+Then('表头不包含{string}', function (header) {
+  assert.equal(this.table.headers.includes(header), false, this.table.headers.join(','));
+});
+
+Then('第{int}行{string}单元格为{string}', function (index, header, value) {
+  const column = this.table.headers.indexOf(header);
+  assert.ok(column >= 0, this.table.headers.join(','));
+  const cell = this.table.rows[index - 1][column];
+  assert.equal(cell == null ? '' : String(cell), value);
+});
+
+Then('工作簿首条{string}为{string}', function (header, value) {
+  const headers = this.workbookCheck.aoa[0];
+  const column = headers.indexOf(header);
+  assert.ok(column >= 0, headers.join(','));
+  assert.equal(String(this.workbookCheck.aoa[1][column]), value);
+});
+
+Then('目标条数上限为{string}', function (value) {
+  assert.equal(this.panel.target.max, value);
+});
+
+When('抖音搜索页拦截到该搜索响应', async function () {
+  const payload = this.payloadText;
+  const messages = [];
+  const nativeFetch = function (url) {
+    return Promise.resolve({
+      url: String(url),
+      clone() {
+        return this;
+      },
+      text() {
+        return Promise.resolve(payload);
+      },
+    });
+  };
+  const location = {
+    hostname: 'www.douyin.com',
+    pathname: '/search/装修',
+    origin: 'https://www.douyin.com',
+    href: 'https://www.douyin.com/search/装修',
+  };
+  const history = { pushState() {}, replaceState() {} };
+  const sandbox = {
+    URL,
+    window: {
+      location,
+      history,
+      addEventListener() {},
+      postMessage(data) {
+        messages.push(data);
+      },
+      fetch: nativeFetch,
+    },
+    setInterval,
+    clearInterval,
+    location,
+    history,
+  };
+  function XMLHttpRequest() {}
+  XMLHttpRequest.prototype.open = function () {};
+  XMLHttpRequest.prototype.send = function () {};
+  sandbox.XMLHttpRequest = XMLHttpRequest;
+  sandbox.window.XMLHttpRequest = XMLHttpRequest;
+  vm.createContext(sandbox);
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'extensions', 'xhs-search-export', 'src', 'inject-main.js'),
+    'utf8'
+  );
+  vm.runInContext(source, sandbox);
+  sandbox.window.fetch = function (url) {
+    return nativeFetch(url);
+  };
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  const calls = [
+    'https://www.douyin.com/aweme/v1/web/comment/list/?aweme_id=1',
+    'https://www.douyin.com/aweme/v1/web/discover/search/?keyword=a',
+    'https://www.douyin.com/aweme/v1/web/general/search/single/?offset=0',
+    'https://www.douyin.com/aweme/v1/web/search/item/?offset=0',
+  ];
+  for (const url of calls) {
+    await sandbox.window.fetch(url);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  if (sandbox.window.__xhsSearchExportTimer) {
+    clearInterval(sandbox.window.__xhsSearchExportTimer);
+  }
+  const found = messages.filter((item) => item && item.type === 'search-notes-response');
+  assert.equal(found.length, 2, JSON.stringify(messages.map((item) => item && item.type)));
+  this.store.ingestPayload(found[0].body);
+});
+
 When('挂载页内面板到文档', function () {
   const dom = new JSDOM('<!DOCTYPE html><html><body><div id="app"></div></body></html>', {
     url: 'https://www.xiaohongshu.com/search_result?keyword=test',

@@ -7,11 +7,17 @@
 
   function pageMode() {
     const host = location.hostname;
-    if (host !== 'www.xiaohongshu.com' && host !== 'xiaohongshu.com') return '';
     const path = location.pathname || '/';
-    if (path === '/search_result' || path.indexOf('/search_result/') === 0) return 'search';
-    if (path === '/search_result_ai' || path.indexOf('/search_result_ai/') === 0) return 'search';
-    if (path === '/' || path === '/explore' || path === '/explore/') return 'recommend';
+    if (host === 'www.xiaohongshu.com' || host === 'xiaohongshu.com') {
+      if (path === '/search_result' || path.indexOf('/search_result/') === 0) return 'search';
+      if (path === '/search_result_ai' || path.indexOf('/search_result_ai/') === 0) return 'search';
+      if (path === '/' || path === '/explore' || path === '/explore/') return 'recommend';
+      return '';
+    }
+    if (host === 'www.douyin.com' || host === 'douyin.com') {
+      if (path === '/search' || path === '/search/' || path.indexOf('/search/') === 0) return 'search';
+      return '';
+    }
     return '';
   }
 
@@ -19,7 +25,20 @@
     const text = String(url || '');
     if (text.indexOf('search/notes') !== -1) return 'search';
     if (text.indexOf('/homefeed') !== -1) return 'recommend';
+    if (isDouyinSearchApi(text)) return 'search';
     return '';
+  }
+
+  function isDouyinSearchApi(url) {
+    let path = '';
+    try {
+      path = new URL(String(url), location.href).pathname;
+    } catch (error) {
+      return false;
+    }
+    if (path.charAt(path.length - 1) !== '/') path += '/';
+    return path.indexOf('/aweme/v1/web/general/search/') !== -1
+      || path.indexOf('/aweme/v1/web/search/item/') !== -1;
   }
 
   function emit(type, extra) {
